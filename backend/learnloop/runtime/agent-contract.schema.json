@@ -1,0 +1,1914 @@
+{
+  "snapshot": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "schemaVersion": {
+        "type": "number",
+        "const": 1
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "courseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "workflow": {
+        "type": "string",
+        "enum": [
+          "course_preparation",
+          "next_activity",
+          "assessment"
+        ]
+      },
+      "conceptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 3000
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "waiting_for_learner",
+          "needs_review",
+          "paused",
+          "completed",
+          "failed"
+        ]
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 3000
+      },
+      "recordVersion": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "lastSequence": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "lastEventId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "checkpointId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "allowedCommands": {
+        "maxItems": 2,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "retry",
+            "resume"
+          ]
+        }
+      },
+      "currentAgent": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "expert",
+              "tutoring",
+              "assessing"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "agents": {
+        "type": "object",
+        "properties": {
+          "expert": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "expert",
+                  "tutoring",
+                  "assessing"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_started",
+                  "queued",
+                  "running",
+                  "waiting_for_input",
+                  "waiting_for_validation",
+                  "completed",
+                  "needs_review",
+                  "failed",
+                  "paused"
+                ]
+              },
+              "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "retrieve_evidence",
+                  "publish_resources",
+                  "load_learner_state",
+                  "assign_activity",
+                  "assess_response",
+                  "record_assessment",
+                  "revise_plan"
+                ]
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "role",
+              "status",
+              "task",
+              "detail"
+            ],
+            "additionalProperties": false
+          },
+          "tutoring": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "expert",
+                  "tutoring",
+                  "assessing"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_started",
+                  "queued",
+                  "running",
+                  "waiting_for_input",
+                  "waiting_for_validation",
+                  "completed",
+                  "needs_review",
+                  "failed",
+                  "paused"
+                ]
+              },
+              "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "retrieve_evidence",
+                  "publish_resources",
+                  "load_learner_state",
+                  "assign_activity",
+                  "assess_response",
+                  "record_assessment",
+                  "revise_plan"
+                ]
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "role",
+              "status",
+              "task",
+              "detail"
+            ],
+            "additionalProperties": false
+          },
+          "assessing": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "expert",
+                  "tutoring",
+                  "assessing"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_started",
+                  "queued",
+                  "running",
+                  "waiting_for_input",
+                  "waiting_for_validation",
+                  "completed",
+                  "needs_review",
+                  "failed",
+                  "paused"
+                ]
+              },
+              "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "retrieve_evidence",
+                  "publish_resources",
+                  "load_learner_state",
+                  "assign_activity",
+                  "assess_response",
+                  "record_assessment",
+                  "revise_plan"
+                ]
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "role",
+              "status",
+              "task",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "expert",
+          "tutoring",
+          "assessing"
+        ],
+        "additionalProperties": false
+      },
+      "validation": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "pending",
+              "accepted",
+              "rejected"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "course_resources",
+              "activity",
+              "learner_state"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3000
+          },
+          "candidate": {
+            "type": "object",
+            "properties": {
+              "conceptId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "before": {
+                "type": "string",
+                "enum": [
+                  "unassessed",
+                  "developing",
+                  "demonstrated",
+                  "review_due"
+                ]
+              },
+              "after": {
+                "type": "string",
+                "enum": [
+                  "unassessed",
+                  "developing",
+                  "demonstrated",
+                  "review_due"
+                ]
+              },
+              "difficulty": {
+                "type": "string",
+                "enum": [
+                  "basic",
+                  "intermediate",
+                  "advanced"
+                ]
+              }
+            },
+            "required": [
+              "conceptId",
+              "before",
+              "after",
+              "difficulty"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "status",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "committedChanges": {
+        "maxItems": 100,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "conceptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "before": {
+              "type": "string",
+              "enum": [
+                "unassessed",
+                "developing",
+                "demonstrated",
+                "review_due"
+              ]
+            },
+            "after": {
+              "type": "string",
+              "enum": [
+                "unassessed",
+                "developing",
+                "demonstrated",
+                "review_due"
+              ]
+            },
+            "difficulty": {
+              "type": "string",
+              "enum": [
+                "basic",
+                "intermediate",
+                "advanced"
+              ]
+            },
+            "learnerVersion": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "conceptId",
+            "before",
+            "after",
+            "difficulty",
+            "learnerVersion"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "artifacts": {
+        "maxItems": 100,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "graph",
+                "activity",
+                "assessment",
+                "evidence"
+              ]
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3000
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "candidate",
+                "published",
+                "committed"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "label",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "references": {
+        "maxItems": 100,
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "documentId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 3000
+            },
+            "page": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "conceptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "documentId",
+            "label"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "events": {
+        "maxItems": 1000,
+        "type": "array",
+        "items": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "runId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "courseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sequence": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "agent.step"
+                },
+                "payload": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "expert",
+                        "tutoring",
+                        "assessing"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "not_started",
+                        "queued",
+                        "running",
+                        "waiting_for_input",
+                        "waiting_for_validation",
+                        "completed",
+                        "needs_review",
+                        "failed",
+                        "paused"
+                      ]
+                    },
+                    "task": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    },
+                    "tool": {
+                      "type": "string",
+                      "enum": [
+                        "retrieve_evidence",
+                        "publish_resources",
+                        "load_learner_state",
+                        "assign_activity",
+                        "assess_response",
+                        "record_assessment",
+                        "revise_plan"
+                      ]
+                    },
+                    "references": {
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "documentId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 3000
+                          },
+                          "page": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "conceptId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "required": [
+                          "documentId",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "artifacts": {
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "graph",
+                              "activity",
+                              "assessment",
+                              "evidence"
+                            ]
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 3000
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "candidate",
+                              "published",
+                              "committed"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "label",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 3000
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "role",
+                    "status",
+                    "task",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "id",
+                "runId",
+                "courseId",
+                "sequence",
+                "at",
+                "type",
+                "payload"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "runId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "courseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sequence": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "agent.handoff"
+                },
+                "payload": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "enum": [
+                        "expert",
+                        "tutoring",
+                        "assessing"
+                      ]
+                    },
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "expert",
+                        "tutoring",
+                        "assessing"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "id",
+                "runId",
+                "courseId",
+                "sequence",
+                "at",
+                "type",
+                "payload"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "runId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "courseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sequence": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "runtime.validation"
+                },
+                "payload": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "const": "pending"
+                        },
+                        "scope": {
+                          "type": "string",
+                          "enum": [
+                            "course_resources",
+                            "activity",
+                            "learner_state"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 3000
+                        },
+                        "candidate": {
+                          "type": "object",
+                          "properties": {
+                            "conceptId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "before": {
+                              "type": "string",
+                              "enum": [
+                                "unassessed",
+                                "developing",
+                                "demonstrated",
+                                "review_due"
+                              ]
+                            },
+                            "after": {
+                              "type": "string",
+                              "enum": [
+                                "unassessed",
+                                "developing",
+                                "demonstrated",
+                                "review_due"
+                              ]
+                            },
+                            "difficulty": {
+                              "type": "string",
+                              "enum": [
+                                "basic",
+                                "intermediate",
+                                "advanced"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "conceptId",
+                            "before",
+                            "after",
+                            "difficulty"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scope",
+                        "summary"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "const": "accepted"
+                        },
+                        "scope": {
+                          "type": "string",
+                          "enum": [
+                            "course_resources",
+                            "activity",
+                            "learner_state"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 3000
+                        },
+                        "previousVersion": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "newVersion": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "committed": {
+                          "type": "object",
+                          "properties": {
+                            "conceptId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "before": {
+                              "type": "string",
+                              "enum": [
+                                "unassessed",
+                                "developing",
+                                "demonstrated",
+                                "review_due"
+                              ]
+                            },
+                            "after": {
+                              "type": "string",
+                              "enum": [
+                                "unassessed",
+                                "developing",
+                                "demonstrated",
+                                "review_due"
+                              ]
+                            },
+                            "difficulty": {
+                              "type": "string",
+                              "enum": [
+                                "basic",
+                                "intermediate",
+                                "advanced"
+                              ]
+                            },
+                            "learnerVersion": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "conceptId",
+                            "before",
+                            "after",
+                            "difficulty",
+                            "learnerVersion"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scope",
+                        "summary",
+                        "previousVersion",
+                        "newVersion"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "const": "rejected"
+                        },
+                        "scope": {
+                          "type": "string",
+                          "enum": [
+                            "course_resources",
+                            "activity",
+                            "learner_state"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 3000
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scope",
+                        "summary",
+                        "retryable"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "id",
+                "runId",
+                "courseId",
+                "sequence",
+                "at",
+                "type",
+                "payload"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "runId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "courseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "sequence": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "type": {
+                  "type": "string",
+                  "const": "run.status"
+                },
+                "payload": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "running",
+                        "waiting_for_learner",
+                        "needs_review",
+                        "paused",
+                        "completed",
+                        "failed"
+                      ]
+                    },
+                    "summary": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    },
+                    "checkpointId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "allowedCommands": {
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "retry",
+                          "resume"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 3000
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "summary",
+                    "allowedCommands"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "id",
+                "runId",
+                "courseId",
+                "sequence",
+                "at",
+                "type",
+                "payload"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3000
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "id",
+      "courseId",
+      "workflow",
+      "label",
+      "status",
+      "summary",
+      "recordVersion",
+      "lastSequence",
+      "allowedCommands",
+      "currentAgent",
+      "agents",
+      "validation",
+      "committedChanges",
+      "artifacts",
+      "references",
+      "events"
+    ],
+    "additionalProperties": false
+  },
+  "event": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "courseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "type": {
+            "type": "string",
+            "const": "agent.step"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "expert",
+                  "tutoring",
+                  "assessing"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_started",
+                  "queued",
+                  "running",
+                  "waiting_for_input",
+                  "waiting_for_validation",
+                  "completed",
+                  "needs_review",
+                  "failed",
+                  "paused"
+                ]
+              },
+              "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "tool": {
+                "type": "string",
+                "enum": [
+                  "retrieve_evidence",
+                  "publish_resources",
+                  "load_learner_state",
+                  "assign_activity",
+                  "assess_response",
+                  "record_assessment",
+                  "revise_plan"
+                ]
+              },
+              "references": {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "documentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    },
+                    "page": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "conceptId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "required": [
+                    "documentId",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "artifacts": {
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "graph",
+                        "activity",
+                        "assessment",
+                        "evidence"
+                      ]
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "candidate",
+                        "published",
+                        "committed"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "label",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "role",
+              "status",
+              "task",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "runId",
+          "courseId",
+          "sequence",
+          "at",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "courseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "type": {
+            "type": "string",
+            "const": "agent.handoff"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "enum": [
+                  "expert",
+                  "tutoring",
+                  "assessing"
+                ]
+              },
+              "to": {
+                "type": "string",
+                "enum": [
+                  "expert",
+                  "tutoring",
+                  "assessing"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "runId",
+          "courseId",
+          "sequence",
+          "at",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "courseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "type": {
+            "type": "string",
+            "const": "runtime.validation"
+          },
+          "payload": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "pending"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "course_resources",
+                      "activity",
+                      "learner_state"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "candidate": {
+                    "type": "object",
+                    "properties": {
+                      "conceptId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "before": {
+                        "type": "string",
+                        "enum": [
+                          "unassessed",
+                          "developing",
+                          "demonstrated",
+                          "review_due"
+                        ]
+                      },
+                      "after": {
+                        "type": "string",
+                        "enum": [
+                          "unassessed",
+                          "developing",
+                          "demonstrated",
+                          "review_due"
+                        ]
+                      },
+                      "difficulty": {
+                        "type": "string",
+                        "enum": [
+                          "basic",
+                          "intermediate",
+                          "advanced"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "conceptId",
+                      "before",
+                      "after",
+                      "difficulty"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "status",
+                  "scope",
+                  "summary"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "accepted"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "course_resources",
+                      "activity",
+                      "learner_state"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "previousVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "newVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "committed": {
+                    "type": "object",
+                    "properties": {
+                      "conceptId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "before": {
+                        "type": "string",
+                        "enum": [
+                          "unassessed",
+                          "developing",
+                          "demonstrated",
+                          "review_due"
+                        ]
+                      },
+                      "after": {
+                        "type": "string",
+                        "enum": [
+                          "unassessed",
+                          "developing",
+                          "demonstrated",
+                          "review_due"
+                        ]
+                      },
+                      "difficulty": {
+                        "type": "string",
+                        "enum": [
+                          "basic",
+                          "intermediate",
+                          "advanced"
+                        ]
+                      },
+                      "learnerVersion": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "conceptId",
+                      "before",
+                      "after",
+                      "difficulty",
+                      "learnerVersion"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "status",
+                  "scope",
+                  "summary",
+                  "previousVersion",
+                  "newVersion"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "const": "rejected"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "course_resources",
+                      "activity",
+                      "learner_state"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "status",
+                  "scope",
+                  "summary",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "runId",
+          "courseId",
+          "sequence",
+          "at",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "courseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "type": {
+            "type": "string",
+            "const": "run.status"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "waiting_for_learner",
+                  "needs_review",
+                  "paused",
+                  "completed",
+                  "failed"
+                ]
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 3000
+              },
+              "checkpointId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "allowedCommands": {
+                "maxItems": 2,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "retry",
+                    "resume"
+                  ]
+                }
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 3000
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "status",
+              "summary",
+              "allowedCommands"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "id",
+          "runId",
+          "courseId",
+          "sequence",
+          "at",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

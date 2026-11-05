@@ -1,0 +1,3 @@
+# Optional: only needed to import an existing PostgreSQL/Qdrant workspace.
+-r requirements.txt
+psycopg2-binary==2.9.11

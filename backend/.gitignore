@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+__pycache__/
+.venv/
+node_modules/
+.pytest_cache/
+.ruff_cache/
+*.log
+data/
+*.db
+*.db-wal
+*.db-shm
+*.worker.lock

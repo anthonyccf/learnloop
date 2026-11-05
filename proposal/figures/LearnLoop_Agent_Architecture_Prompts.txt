@@ -1,0 +1,52 @@
+EXPERT
+Use case: infographic-diagram. Create a clean, high-resolution landscape academic architecture diagram on pure white background for a LearnLoop project proposal. Flat technical schematic, crisp rectangular modules, thin orthogonal arrows, ample whitespace, readable dark navy sans-serif text, understated light fills. No gradients, shadows, decorative robots, tiny text, watermarks, figure numbers, or caption. Make all text accurate and legible. Make arrows unambiguous, with arrowheads touching destination modules and routed clear of text. Clearly distinguish agent decision logic from runtime-only committed writes. A returned observation informs another decision; do not draw direct writes bypassing runtime.
+Title exactly "Expert Agent Architecture".
+Use pale blue boxes for agent reasoning and pale gray for runtime/storage. Layout: left column inputs, center agent steps top-to-bottom, right column tools and validation outputs; bottom storage.
+Input box "Course Materials" / "COMP7608B documents" / "Course ID and source locations" feeds step "1  Retrieve Course Evidence" / "Parse documents and passages" / "Use retrieve_evidence".
+Next arrow down to "2  Construct Knowledge Graph" / "Identify concepts and objectives" / "Propose prerequisite and related-topic edges".
+Next down to "3  Generate Learning Resources" / "Explanations and worked examples" / "Questions, hints, reference answers and rubrics" / "Basic • Intermediate • Advanced".
+Next down to "4  Attach Source References" / "Link concepts, edges and resources to passages" / "Separate optional external enrichment".
+Then arrow into right-side runtime box "Runtime Validation" / "Check source IDs and concept references" / "Check prerequisite cycles" / "Check difficulty and rubric fields".
+Below validation a decision diamond "Validation passes?" YES down to "publish_resources" / "Runtime publishes a versioned resource set" then to bottom store "Course Knowledge Base" / "Validated graph, resources and source links". NO branch clearly loops back to step 2 with label "Revise within retry limits"; a separate branch from NO leads to small "Stop and Flag for Review" with label "Limit reached or no supporting evidence".
+Right upper small tool box "Evidence Tool" / "retrieve_evidence" / "Returns course-scoped passages and page IDs" connects to step1 with thin two-way arrow labeled "Tool result".
+From Course Knowledge Base arrow right to small destination "Tutoring and Assessing Agents" / "Course evidence and assessment rubrics".
+The course knowledge base stores course content only. Do not include learner scoring or learner-state commits in Expert Agent. Runtime publishes; Expert only proposes.
+
+TUTORING
+Use case: infographic-diagram. Create a clean, high-resolution landscape academic architecture diagram on pure white background for a LearnLoop project proposal. Flat technical schematic, crisp rectangular modules, thin orthogonal arrows, ample whitespace, readable dark navy sans-serif text, understated light fills. No gradients, shadows, decorative robots, tiny text, watermarks, figure numbers, or caption. Make all text accurate and legible. Make arrows unambiguous, with arrowheads touching destination modules and routed clear of text. Clearly distinguish agent decision logic from runtime-only committed writes. A returned observation informs another decision; do not draw direct writes bypassing runtime.
+Title exactly "Tutoring Agent Architecture".
+Use pale teal boxes for agent reasoning, pale gray for runtime/storage. Layout: input stores left, center top-to-bottom agent workflow, runtime/handoff right, feedback loop bottom.
+Left input store "Course Knowledge Base" / "Concepts, prerequisites and activities" feeds step "1  Observe Learning Context". Another left input "Persistent Learner Model" / "Goal, evidence, misconceptions and review dates" feeds same step, labeled "load_learner_state".
+Step1 text "Load learner state and relevant course evidence" / "Use load_learner_state and retrieve_evidence".
+Down to "2  Filter Candidate Concepts" / "Check prerequisite readiness".
+Down to "3  Rank Learning Needs" / "Learner need • assessment uncertainty" / "Review urgency • recent performance".
+Down to "4  Select Instructional Action" / "Introduce • practice • adjust difficulty" / "Revisit prerequisite • review • advance".
+Down to "5  Propose Activity and Plan" / "Concept, difficulty, activity type and evidence IDs".
+Arrow right into "Runtime Validation" / "Check objective, sources and prerequisites" / "Check ownership and expected version".
+Decision diamond below "Proposal valid?" YES to box "Authorized Tools" / "assign_activity" / "revise_plan" / "Runtime persists activity and plan".
+Then arrow to right-side "Learner" / "Complete the assigned activity".
+Learner arrow to bottom-right "Assessing Agent and Runtime" / "Assess response and commit validated evidence".
+Then arrow to bottom-left "Updated Learner Model" / "New evidence, state and review schedule", then loop arrow to step1 label "Next observation".
+NO from Proposal valid loops to step4 label "Replan within limits"; small stop box "Pause or Stop" / "Await learner input or preserve progress" accessible with labeled dashed line "Missing evidence or budget exhausted".
+Preserve only three agent architecture; do not add Gamification Agent. Tutoring never directly changes demonstrated status.
+
+ASSESSING
+Use case: infographic-diagram. Create a clean, high-resolution landscape academic architecture diagram on pure white background for a LearnLoop project proposal. Flat technical schematic, crisp rectangular modules, thin orthogonal arrows, ample whitespace, readable dark navy sans-serif text, understated light fills. No gradients, shadows, decorative robots, tiny text, watermarks, figure numbers, or caption. Make all text accurate and legible. Make arrows unambiguous, with arrowheads touching destination modules and routed clear of text. Clearly distinguish agent decision logic from runtime-only committed writes. A returned observation informs another decision; do not draw direct writes bypassing runtime.
+Title exactly "Assessing Agent Architecture".
+Use pale purple for agent reasoning, pale gray for runtime/storage. Layout: inputs left, central workflow top-to-bottom, runtime validation and state storage right, uncertainty branch bottom-left.
+Input box "Learner Response" / "Activity ID • answer • hint usage" feeds step "1  Load Assessment Context".
+Other input box "Rubrics and Course Sources" / "Reference answer and supporting passages" feeds step1.
+Other input box "Prior Learner Evidence" / "Attempts, difficulty and contradictions" feeds step1.
+Step1 text "Use retrieve_evidence and load_learner_state".
+Down to "2  Assess Rubric Coverage" / "Use assess_response" / "Correctness and coverage are primary evidence".
+Down to "3  Qualify Evidence" / "Difficulty • hint usage • response time" / "Prior attempts • contradictory evidence".
+Down to "4  Identify Misconceptions and Uncertainty".
+Down to diamond "Evidence sufficient?" YES right to "5  Propose State Update" / "Preserve all assessment evidence" / "Match the concept target difficulty".
+Arrow to right box "Runtime Validation" / "Validate rubric, sources and record IDs" / "Check expected version and transition rules" / "Require repeated independent evidence for demonstration".
+Below runtime decision diamond "Update valid?" YES down to "record_assessment" / "Runtime commits once per operation ID".
+Then to bottom-right store "Persistent Learner Model" / "unassessed • developing" / "demonstrated • review_due".
+Arrow out to small destination "Tutoring Agent" / "Use the new observation to adapt".
+NO from Evidence sufficient? goes to lower-left box "Record Uncertainty and Request Diagnosis" / "No unsupported mastery advancement" / "Bounded evidence checks or further assessment".
+NO from Update valid? goes to same uncertainty box with label "Reject unsupported or stale update".
+Uncertainty box has arrow back to step1 label "New evidence within limits"; separate arrow to tiny terminal "Pause with Progress Saved" label "No evidence or limit reached".
+All state writes, including assessment evidence, pass through runtime; assessor proposes and never commits learner state directly. No numerical mastery threshold invented.

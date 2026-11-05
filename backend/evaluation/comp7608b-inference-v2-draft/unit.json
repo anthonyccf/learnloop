@@ -1,0 +1,271 @@
+{
+  "sha256": "9ef47150080d849bedb28fc9f26e6eb30864295e881ccda1d366af5eb5ea3d45",
+  "payload": {
+    "id": "comp7608b-unit-04475e14",
+    "title": "COMP7608B: controlled inference course unit",
+    "sourceSha256": "60b59e39140498f1dc50ddab45c5089925ff8f14c3442ebff824842500711752",
+    "passages": [
+      {
+        "id": "p01",
+        "text": "QUANTIZATION\nFP32, FP16 and BF16 bit layouts\nCOMP7608B · Lecture 2 Q02\nNVIDIA, reduced-precision formats\nSign sets polarity. Exponent sets range. Fraction sets precision.\nFP32 s e e e e e e e e f f f f f f f f f f f f f f f f f f f f f f f\n32 bits = 1 sign + 8 exponent + 23 fraction\nFP16 s e e e e e f f f f f f f f f f\n16 bits = 1 sign + 5 exponent + 10 fraction\nMore fraction bits than BF16\nBF16 s e e e e e e e e f f f f f f f\n16 bits = 1 sign + 8 exponent + 7 fraction\nSame exponent width as FP32\nBoth 16-bit formats halve FP32 storage. BF16 keeps a wider range, while FP16 keeps finer \nprecision.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 12
+      },
+      {
+        "id": "p02",
+        "text": "QUANTIZATION\nHow computers store floating-point numbers\nCOMP7608B · Lecture 2 13\nThe same value in FP32 and BF16     x = 6.5078125\ns = sign, E = stored exponent, B = bias, F = fraction as an integer, m = fraction bits\nFormat Sign Exponent Fraction bits Stored value\nFP32 0 10000001 10100000100000000000000 6.5078125\nBF16 0 10000001 1010000 6.5\nFP32: m = 23, F = 5,259,264      BF16: m = 7, F = 80      Both: E = 129, B = 127\nBF16 stores 6.5. Absolute error = 0.0078125, or about 0.12% of the original value.\nRound to nearest. FP16 represents this particular value exactly. Formula applies to normal finite values. Source: NVIDIA, Floating Point and IEEE 754.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 13
+      },
+      {
+        "id": "p03",
+        "text": "QUANTIZATION\nQuantization formula and parameter selection\nCOMP7608B · Lecture 2 Q04\nPyTorch, Practical Quantization\nq = clip(round(x / s) + z, qmin, qmax)     x̂ = s × (q − z)\ns > 0 is the step size.  z is the integer code for zero.  x̂ approximates x.\n1  Choose bit width and integer range\nUnsigned 4-bit uses [0, 15].\nSymmetric signed 4-bit often uses [−7, 7],\nleaving the −8 storage code unused.\n2  Select a real range [a, b] including zero\nUse weight statistics or representative\nactivation samples. Start with min/max.\nPercentile or error-based clipping may help.\nAsymmetric s = (b − a) / (qmax − qmin)\nz = clip(round(qmin − a / s), qmin, qmax)\nSymmetric A = max(|a|, |b|)     s = A / 7     z = 0     (4-bit example)",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 14
+      },
+      {
+        "id": "p04",
+        "text": "QUANTIZATION\nTwo 4-bit quantization examples\nCOMP7608B · Lecture 2 Q05\nSymmetric weights Asymmetric range\nObserved range [−3.5, 3.5]\nq range [−7, 7]\nObserved range [−1.0, 2.0]\nq range [0, 15]\ns = 3.5 / 7 = 0.5\nz = 0\ns = 3 / 15 = 0.2\nz = round(0 − (−1) / 0.2) = 5\nx = 1.3\nq = round(1.3 / 0.5) = 3\nStored bits   0011\nx̂ = 0.5 × 3 = 1.5\nx = 0.74\nq = round(0.74 / 0.2) + 5 = 9\nStored bits   1001\nx̂ = 0.2 × (9 − 5) = 0.8\nAbsolute errors are 0.20 and 0.06. Reconstructing either value requires its scale and zero-point.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 15
+      },
+      {
+        "id": "p05",
+        "text": "QUANTIZATION\nOutliers make one scale too coarse\nCOMP7608B · Lecture 2 Q06\nOne symmetric 4-bit scale for all five values\nA = 7.0     s = 7.0 / 7 = 1.0     z = 0\nOriginal x −0.4 −0.2 0.1 0.3 7.0\nStored q 0 0 0 0 7\nReconstructed x̂ 0.0 0.0 0.0 0.0 7.0\nThe outlier preserves its value, while four ordinary weights collapse to zero. Clipping trades one \nerror for another.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 16
+      },
+      {
+        "id": "p06",
+        "text": "QUANTIZATION\nSmaller groups can use different scales\nCOMP7608B · Lecture 2 Q07\nSymmetric INT4, round to nearest even\nGroup Original values Scale Stored q\nA [−0.4, −0.2, 0.1, 0.3] 0.4 / 7 [−7, −4, 2, 5]\nB [7.0, 3.5, 0.0, −7.0] 1.0 [7, 4, 0, −7]\nFor 128 weights, 4-bit values occupy 64 bytes.\nOne FP16 scale adds 2 bytes, or 3.1%, before zero-points and other metadata.\nSmaller groups adapt to local ranges, but require more scales and support from the inference \nkernel.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 17
+      },
+      {
+        "id": "p07",
+        "text": "QUANTIZATION\nError accumulation and mixed precision\nCOMP7608B · Lecture 2 18\nStart at 2048. Add 1 four times. The exact answer is 2052.\nAccumulator After +1 After +1 After +1 After +1 Final error\nFP32 reference 2049 2050 2051 2052 0\nFP16 each step 2048 2048 2048 2048 4\nFP16 inputs, FP32 sum 2049 2050 2051 2052 0\nAt 2048, FP16 spacing is 2. Each 2048 + 1 rounds back to 2048.\nUse higher precision for sums, normalization and softmax to limit further error.\nUpcasting cannot recover bits already lost. Storage and computation can use different precisions.\nQuantized models already mix formats\nQwen2-7B-Instruct-AWQ INT4 linear weights with FP16 activations.\nQwen3-30B-A3B-FP8 FP8 weights, with routers and LM head kept in BF16.\nToy sequential sum, round-to-nearest-even. Actual accumulation depends on the kernel. Sources: NVIDIA accuracy guidance and the named model configs.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 18
+      },
+      {
+        "id": "p08",
+        "text": "QUANTIZATION\nPost-training quantization and QAT\nCOMP7608B · Lecture 2 Q09\nPyTorch, Quantization-Aware Training for LLMs /   Frantar et al., GPTQ /   Lin et al., AWQ\nPost-training quantization (PTQ)\nA trained checkpoint is already available. Quantize it using weight statistics\nand, for methods such as GPTQ or AWQ, representative calibration inputs.\nCheckpoint Calibration + conversion Quantized checkpoint\nQuantization-aware training (QAT)\nSimulate quantize + dequantize in the forward pass, then update weights\nwith gradients. Export real low-bit weights after training or fine-tuning.\nRounding uses an approximate backward gradient, often a straight-through estimator.\nPTQ is a low-cost first deployment candidate. QAT adds training cost to help recover quality.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 19
+      },
+      {
+        "id": "p09",
+        "text": "QUANTIZATION\nQuantization, speed, storage and accuracy\nCOMP7608B · Lecture 2 Q12\nQwen2 speed benchmark (2024) /   Qwen2 quantized-model evaluation (2024) /   Qwen official checkpoint tensor indexes\nQwen2-7B-Instruct, one A100 80GB, vLLM 0.4.2\nBatch 1, 1 input token, 2,048 output tokens\nQuantization Speed\n(tokens/s) Speedup Weight\npayload (GB)\nMean score\n(%)\nLoss\n(pp)\nBF16 80.45 1.00× 15.23 66.9 0.0\nGPTQ INT8 114.32 1.42× 8.87 66.2 0.7\nGPTQ INT4 143.40 1.78× 5.58 64.1 2.8\nAWQ INT4 96.65 1.20× 5.57 64.1 2.8\nPayload = bytes of stored tensors, including scales and unquantized tensors.\nMean score = reported mean of MMLU, C-Eval and IFEval. Loss is in percentage points.\nHistorical results. Payload excludes runtime memory. Quality uses separate task evaluations.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 21
+      },
+      {
+        "id": "p10",
+        "text": "TRANSFORMER\nRecap of multi-head attention\nCOMP7608B · Lecture 1 38\nS = QKᵀ / √dₕ\nQ\n[1,4,16,3\n2]\n×\nKᵀ\n[1,4,32,1\n6]\n=\nS\n[1,4,16,1\n6]\nFor T=16, each head contains \n16×16 pair scores.\nEach row compares one query with all \nkeys. Add M before softmax to hide \nfuture positions.\nINPUT\nQ,K head tensors\nOUTPUT\nS [1,4,16,16]\nPARAMETERS\n0\nFLOPs\n2BT²d\nS = QKᵀ / √dₕ\nA = \nsoftmax(S+M)\nC = AV\nX\n[B,T,d]\nW_Q\n[d,d]\nQ\n[B,H,T,dₕ]\nW_K\n[d,d]\nK\n[B,H,T,dₕ]\nW_V\n[d,d]\nV\n[B,H,T,dₕ]\nQ and K include RoPE; M excludes future positions.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 22
+      },
+      {
+        "id": "p11",
+        "text": "PREFILL, DECODING AND KV CACHE\nAttention over a causal sequence\nCOMP7608B · Lecture 2 I02\nVaswani et al., Attention Is All You Need\nExample sequence    The   sky   is   blue\nKeys, by token position\nThe sky is blue\nq1\nq2\nq3\nq4\n• × × ×\n• • × ×\n• • • ×\n• • • •\nM[i,j] = 0 when j ≤ i\nM[i,j] = −∞ when j > i\nEach query combines only its prefix.\nAll prompt positions are already known,\nso their rows can run together.\nThe final row provides the last token’s hidden state. A vocabulary projection predicts the next \ntoken.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 23
+      },
+      {
+        "id": "p12",
+        "text": "PREFILL, DECODING AND KV CACHE\nThe prompt is prefill, then decoding repeats\nCOMP7608B · Lecture 2 I03\nNVIDIA, LLM Inference Optimization\nIllustrative tokens    The   sky   is   blue   today   .\nPhase New input to the model Next token selected\nPrefill The   sky   is\nPositions 1–3 together blue (position 4)\nDecode step 1 blue\nPosition 4 only today (position 5)\nDecode step 2 today\nPosition 5 only . (position 6)\nPrefill produces the first generated token. Each decoding step consumes the last selected token \nto predict another.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 24
+      },
+      {
+        "id": "p13",
+        "text": "QUANTIZATION\nCommon quantization methods\nCOMP7608B · Lecture 2 Q10\nFrantar et al., GPTQ /   Lin et al., AWQ /   Xiao et al., SmoothQuant /   PyTorch, Quantization-Aware Training for LLMs\nMethod Typical use What it changes\nRTN PTQ baseline Round each value to a chosen grid.\nGPTQ PTQ, often W4A16 Use calibration inputs and curvature\ninformation to reduce layer-output error.\nAWQ PTQ, often W4A16 Use activation statistics to rescale\nimportant weight channels.\nSmoothQuant PTQ, W8A8 Rescale activation outliers into weights\nso both can use INT8.\nQAT Training / fine-tuning Learn with simulated quantization\nerror, then convert for inference.\nGPTQ and AWQ commonly appear in model cards.\nFP8 / FP4 are formats. PTQ / QAT describe how a quantized model is produced.",
+        "document": "COMP7608B_Lecture_2_v1 (1).pdf",
+        "page": 20
+      }
+    ],
+    "graph": {
+      "concepts": [
+        {
+          "id": "c01",
+          "title": "Floating-point layouts and precision-range tradeoffs",
+          "summary": "Floating-point formats encode sign, exponent, and fraction: sign gives polarity, exponent controls range, and fraction controls precision. FP32 uses 1/8/23 bits; FP16 uses 1/5/10; BF16 uses 1/8/7. Both 16-bit formats halve FP32 storage, but BF16 retains FP32's exponent width while FP16 has more fraction bits. For the shown value 6.5078125, BF16 rounds to 6.5 with absolute error 0.0078125 (about 0.12%), while FP16 represents that particular value exactly.",
+          "sources": [
+            {
+              "chunkId": "p01",
+              "quote": "Sign sets polarity. Exponent sets range. Fraction sets precision. ... Both 16-bit formats halve FP32 storage. BF16 keeps a wider range, while FP16 keeps finer precision."
+            },
+            {
+              "chunkId": "p02",
+              "quote": "The same value in FP32 and BF16 x = 6.5078125 ... BF16 stores 6.5. Absolute error = 0.0078125, or about 0.12% of the original value. Round to nearest. FP16 represents this particular value exactly."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c02",
+          "title": "Quantization and reconstruction with scale and zero-point",
+          "summary": "Affine quantization maps a real value x to an integer code using q = clip(round(x / s) + z, qmin, qmax), then reconstructs it as x̂ = s × (q − z). Here s > 0 is the step size, z is the integer code representing zero, and clipping keeps the rounded code within the selected integer range. The reconstructed value approximates the original.",
+          "sources": [
+            {
+              "chunkId": "p03",
+              "quote": "q = clip(round(x / s) + z, qmin, qmax)     x̂ = s × (q − z). s > 0 is the step size. z is the integer code for zero. x̂ approximates x."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c03",
+          "title": "Selecting quantization ranges, scales, and zero-points",
+          "summary": "Choose a bit width and integer code range, then select a real range [a,b] that includes zero using weight statistics or representative activation samples; min/max is a starting point, while percentile or error-based clipping may help. For asymmetric quantization, s = (b − a)/(qmax − qmin) and z = clip(round(qmin − a/s), qmin, qmax). For symmetric signed 4-bit quantization, the example uses codes [−7,7], s = max(|a|,|b|)/7, and z = 0, leaving storage code −8 unused. The examples reconstruct 1.3 as 1.5 (absolute error 0.20) and 0.74 as 0.8 (absolute error 0.06); reconstruction requires the scale and zero-point.",
+          "sources": [
+            {
+              "chunkId": "p03",
+              "quote": "Asymmetric s = (b − a) / (qmax − qmin); z = clip(round(qmin − a / s), qmin, qmax). Symmetric A = max(|a|, |b|); s = A / 7; z = 0 (4-bit example)."
+            },
+            {
+              "chunkId": "p04",
+              "quote": "Absolute errors are 0.20 and 0.06. Reconstructing either value requires its scale and zero-point."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c04",
+          "title": "How outliers affect quantization error",
+          "summary": "A single symmetric 4-bit scale spanning values from −0.4 to 7.0 is set by the outlier: A = 7.0 and s = 1.0. That preserves the value 7.0 but maps the four ordinary values to zero, illustrating how an outlier can make one shared scale too coarse and how clipping trades error in one part of the range for error elsewhere.",
+          "sources": [
+            {
+              "chunkId": "p05",
+              "quote": "The outlier preserves its value, while four ordinary weights collapse to zero. Clipping trades one error for another."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c05",
+          "title": "Groupwise symmetric INT4 quantization",
+          "summary": "Symmetric INT4 stores weights as 4-bit integer values produced by rounding to the nearest even value. Using different scales for smaller groups lets each group adapt to its local value range, but adds scale metadata and requires inference-kernel support. The example shows 128 weights occupying 64 bytes, with one FP16 scale adding 2 bytes (3.1%) before other metadata.",
+          "sources": [
+            {
+              "chunkId": "p06",
+              "quote": "For 128 weights, 4-bit values occupy 64 bytes. One FP16 scale adds 2 bytes, or 3.1%, before zero-points and other metadata."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c06",
+          "title": "Precision loss in accumulation and mixed precision",
+          "summary": "In the illustrated sum, FP16 spacing at 2048 is 2, so adding 1 and rounding after each step leaves the value at 2048, while summing FP16 inputs in FP32 preserves the increments. Higher precision for sums, normalization, and softmax can limit further error, but upcasting cannot recover bits already lost. Storage and computation may use different precisions; examples include INT4 weights with FP16 activations and FP8 weights with selected components kept in BF16.",
+          "sources": [
+            {
+              "chunkId": "p07",
+              "quote": "Qwen2-7B-Instruct-AWQ INT4 linear weights with FP16 activations. Qwen3-30B-A3B-FP8 FP8 weights, with routers and LM head kept in BF16."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c07",
+          "title": "Post-training quantization and quantization-aware training",
+          "summary": "Post-training quantization (PTQ) converts an existing trained checkpoint using weight statistics and, for methods such as GPTQ or AWQ, representative calibration inputs. Quantization-aware training (QAT) simulates quantize-and-dequantize operations during the forward pass, updates weights with gradients, and exports low-bit weights after training or fine-tuning; rounding commonly uses an approximate backward gradient such as a straight-through estimator. PTQ is described as a low-cost first deployment candidate, whereas QAT adds training cost to help recover quality.",
+          "sources": [
+            {
+              "chunkId": "p08",
+              "quote": "PTQ is a low-cost first deployment candidate. QAT adds training cost to help recover quality."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c08",
+          "title": "Common quantization methods and their mechanisms",
+          "summary": "RTN is a PTQ baseline that rounds values to a chosen grid. GPTQ uses calibration inputs and curvature information to reduce layer-output error; AWQ uses activation statistics to rescale important weight channels; and SmoothQuant moves activation outliers into weights so both can use INT8. QAT instead learns with simulated quantization error before conversion. FP8 and FP4 are formats, while PTQ and QAT describe how a quantized model is produced.",
+          "sources": [
+            {
+              "chunkId": "p13",
+              "quote": "FP8 / FP4 are formats. PTQ / QAT describe how a quantized model is produced."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c09",
+          "title": "Quantization tradeoffs in speed, storage, and quality",
+          "summary": "Quantization can affect inference throughput, stored tensor payload, and task scores differently. In the stated single-A100 Qwen2 benchmark, GPTQ INT4 had higher throughput and a smaller payload than BF16, but a lower mean evaluation score; AWQ INT4 had a similar payload and score to GPTQ INT4 but different throughput. Payload includes stored tensor bytes, including scales and unquantized tensors, excludes runtime memory, and quality is measured separately. These are historical results for the specified setup.",
+          "sources": [
+            {
+              "chunkId": "p09",
+              "quote": "Payload = bytes of stored tensors, including scales and unquantized tensors. ... Historical results. Payload excludes runtime memory. Quality uses separate task evaluations."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c10",
+          "title": "Scaled dot-product multi-head attention computation",
+          "summary": "Multi-head attention computes scores as S = QKᵀ/√dₕ, forms attention weights A = softmax(S + M), and combines values as C = AV. In the illustrated T = 16 case, each head has a 16 × 16 score matrix, with each row comparing one query against all keys. The recap gives the attention FLOP count as 2BT²d and notes that Q and K include RoPE.",
+          "sources": [
+            {
+              "chunkId": "p10",
+              "quote": "Q and K include RoPE"
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c11",
+          "title": "Causal masking restricts attention to the prefix",
+          "summary": "The causal mask permits query position i to attend to keys at positions j ≤ i by setting M[i,j] = 0, and excludes future positions j > i by setting M[i,j] = −∞ before softmax. Consequently, each query combines information only from its prefix.",
+          "sources": [
+            {
+              "chunkId": "p11",
+              "quote": "M[i,j] = 0 when j ≤ i; M[i,j] = −∞ when j > i. Each query combines only its prefix."
+            },
+            {
+              "chunkId": "p10",
+              "quote": "Add M before softmax to hide future positions."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        },
+        {
+          "id": "c12",
+          "title": "Prompt prefill processes known positions together",
+          "summary": "During prefill, all prompt positions are already known, so their causal-attention rows can run together. The final prompt row supplies the last prompt token’s hidden state, which a vocabulary projection uses to predict the first generated token. In the example, the prompt “The sky is” is processed together to select “blue.”",
+          "sources": [
+            {
+              "chunkId": "p11",
+              "quote": "All prompt positions are already known, so their rows can run together. The final row provides the last token’s hidden state. A vocabulary projection predicts the next token."
+            },
+            {
+              "chunkId": "p12",
+              "quote": "Prefill The sky is Positions 1–3 together blue (position 4)."
+            }
+          ],
+          "targetDifficulty": "intermediate"
+        }
+      ],
+      "prerequisites": [
+        {
+          "prerequisite": "c02",
+          "dependent": "c03",
+          "source": {
+            "chunkId": "p03",
+            "quote": "The quantization and reconstruction equations define q, s, and z; parameter selection then specifies the bit width, integer range, real range, scale, and zero-point."
+          }
+        },
+        {
+          "prerequisite": "c03",
+          "dependent": "c04",
+          "source": {
+            "chunkId": "p05",
+            "quote": "One symmetric 4-bit scale for all five values: A = 7.0; s = 7.0 / 7 = 1.0; z = 0."
+          }
+        }
+      ]
+    },
+    "scopeWarnings": []
+  }
+}

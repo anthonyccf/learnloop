@@ -1,0 +1,13 @@
+# Generated private question keys, model drafts and review records stay local.
+**/preparation-calls/
+**/screening-calls/
+**/screening-cache/
+**/drafts/
+**/offline-fixtures/
+**/exams.json
+**/expert-*.json
+**/screening.json
+**/reviews.json
+**/review-history/
+**/review-packet-*.json
+**/review-packet-*.md

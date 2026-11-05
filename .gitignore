@@ -1,0 +1,54 @@
+# Local credentials (keep sanitized templates versioned)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python dependencies and generated files
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+
+# JavaScript dependencies, builds and test output
+**/node_modules/
+**/.next/
+*.tsbuildinfo
+coverage/
+
+# Local application data and scratch output
+*.db
+*.db-wal
+*.db-shm
+*.worker.lock
+*.log
+tmp/
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+~$*
+
+# Historical local document-rendering tools and intermediate files
+/proposal/archive/workfiles/
+
+# LaTeX build intermediates (keep source, figures and final documents)
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.toc

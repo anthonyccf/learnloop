@@ -1,0 +1,8 @@
+{
+  "sha256": "2cb1c5b34afc0af2218adca83cc930e077150ad7ac9f4229a143c1ea3610b615",
+  "payload": {
+    "retainedExamHash": "a8cbc83debaaa23c21b78d6869e8e02721b4093b4775656121c0f3aa66ba4ac9",
+    "sourceUnitHash": "46fd57bfabdb525ee278153d3db149bb961240a4f86c018e369a8cc7cad78fe8",
+    "change": "Added the matching lecture page and corrected the c08 concept citation; all exam prompts, keys and cited passage text unchanged. Retained model receipts verified; no human review implied."
+  }
+}
