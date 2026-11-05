@@ -1,0 +1,5 @@
+Gradient descent updates model weights to reduce a loss function. The gradient
+points toward the steepest increase in loss. Subtracting a small positive multiple
+of the gradient moves in the opposite direction. The learning rate controls the
+step size. A learning rate that is too large can overshoot a minimum. Smaller
+steps may improve stability but can require more updates.

@@ -1,0 +1,1 @@
+Generate only the additional questions requested in requestedDifficulties, one per entry. Basic is recall/direct understanding; Intermediate is application/comparison; Advanced is analysis/multi-concept reasoning. Use supplied passages, distinct prompts and correct difficulty fields. Do not duplicate previous prompts.

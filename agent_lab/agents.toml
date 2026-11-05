@@ -1,0 +1,10 @@
+# Empty model inherits OPENROUTER_MODEL from the lab .env.
+# Set individual model IDs here to compare agents using different models.
+[expert]
+model = ""
+
+[tutoring]
+model = ""
+
+[assessing]
+model = ""

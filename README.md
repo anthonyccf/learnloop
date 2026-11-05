@@ -4,6 +4,10 @@ A course-grounded learning application with three backend agents: **Expert**, **
 
 For a class presentation, start with the [agent architecture and code walkthrough](backend/docs/agent-architecture.md). It maps the proposal to executable code, explains the class concepts demonstrated, and distinguishes implemented behavior from planned work.
 
+For Python-only agent experiments, use the separate [agent lab](agent_lab/README.md).
+It runs the same three agents from a CLI or Python, with editable prompt files,
+per-agent models and its own SQLite database; no frontend or API server is needed.
+
 ## Local setup for teammates (SQLite)
 
 SQLite is the default database. Application records, uploaded documents and embedding vectors live in `backend/data/learnloop.db`; sqlite-vec is installed with the Python dependencies. Each teammate has their own local database. No Docker, PostgreSQL, Qdrant server or separate SQLite installation is required.
@@ -119,6 +123,7 @@ For backend tests, backups and importing an existing workspace, see the [SQLite 
 | Workflow dispatch | [workflows.py](backend/learnloop/runtime/workflows.py) | Map durable jobs to the three agent entry points; handle failure recovery |
 | Shared policy and state | [domain.py](backend/learnloop/core/domain.py), [events.py](backend/learnloop/runtime/events.py), [repository.py](backend/learnloop/persistence/repository.py) | Eligibility, evidence transitions, validated events, and course-scoped data |
 | Application UI | [frontend/src/components/](frontend/src/components/) | Study, practice, map, progress, and public activity display |
+| Python agent lab | [agent_lab/README.md](agent_lab/README.md) | CLI/Python experiments, local prompt/model overrides, isolated SQLite and traces |
 | Activity display contracts | [frontend/src/lib/agent-activity/](frontend/src/lib/agent-activity/) | Public events, reducers, and backend/demo adapters; agent execution is in Python |
 | Proposal | [proposal/README.md](proposal/README.md) | Supplied proposal, source bundles, course guidelines, and lecture notes |
 

@@ -1,0 +1,7 @@
+{
+  "concept": {"id": "gradient-descent", "title": "Gradient descent"},
+  "lesson": "Gradient descent subtracts a positive multiple of the gradient to reduce loss.",
+  "passages": [{"chunkId": "example-1", "text": "The learning rate controls the step size of a gradient descent update."}],
+  "assessment_pending": false,
+  "messages": [{"role": "user", "text": "Explain the learning rate with a small example."}]
+}
