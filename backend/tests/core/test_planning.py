@@ -51,8 +51,10 @@ def test_policy_scores_uncertainty_review_urgency_performance_and_related_advanc
     )
 
 
-def test_explicit_focus_allows_challenging_a_topic_with_unmet_prerequisites():
-    choices = candidates(graph(), {}, focus="b")
+def test_explicit_focus_requires_prerequisites_at_their_target():
+    assert candidates(graph(), {}, focus="b") == []
+    evidence = {"a": {"intermediate": {"state": "demonstrated"}}}
+    choices = candidates(graph(), evidence, focus="b")
     assert [(c["conceptId"], c["action"]) for c in choices] == [("b", "introduce")]
     assert candidates(graph(), {}, focus="unknown") == []
 

@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from learnloop.api import create_app
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import grounding_fingerprint
-from learnloop.core.schemas import TutorChatReply
+from learnloop.core.schemas import PlanChoice, Question, TutorChatReply, TutorObservation
 from learnloop.persistence.database import (
     Activity,
     Base,
@@ -25,6 +25,8 @@ from learnloop.persistence.database import (
     LearnerState,
     StudySession,
 )
+from learnloop.runtime.worker import work_once
+from tests.api.test_integration import prepare
 
 
 @pytest.fixture
@@ -217,3 +219,73 @@ def test_chat_rejects_empty_messages_and_unbounded_history(chat_stack):
     client, _, _ = chat_stack
     assert post_chat(client, message="   ").status_code == 422
     assert post_chat(client, history=[{"role": "user", "text": "Hello"}] * 13).status_code == 422
+
+
+@pytest.mark.parametrize("probe_passes", [True, False])
+def test_tutor_remembers_a_gap_and_requests_private_practice(stack, monkeypatch, probe_passes):
+    client, factory, services, _ = stack
+    course_id, _ = prepare(stack)
+    session = client.post(
+        f"/api/courses/{course_id}/sessions", json={"expectedLearnerVersion": 0}
+    ).json()
+    session_url = f"/api/sessions/{session['id']}"
+    memory_url = f"/api/courses/{course_id}/learner-memory"
+    assert work_once(factory, services)
+    first = client.get(session_url).json()["activity"]
+    generate = services.generate
+    probe_requests = []
+    summary = "Confuses the direction of a gradient update."
+
+    def tutor_with_gap(role, instruction, context, output):
+        if output is TutorChatReply:
+            return TutorChatReply(
+                text="Think about the direction that reduces the loss.",
+                observation=TutorObservation(
+                    kind="gap", summary=summary, quote="I confuse which way the step goes"
+                ),
+            )
+        if output is PlanChoice:
+            assert context["learnerMemory"][first["conceptId"]]["gap"]["summary"] == summary
+        if output is Question and "diagnosticFocus" in context:
+            assert role == "Expert" and context["diagnosticFocus"] == summary
+            probe_requests.append(context["diagnosticFocus"])
+            if not probe_passes:
+                raise ServiceError("insufficient_evidence", "Cannot support the probe.", False)
+        return generate(role, instruction, context, output)
+
+    monkeypatch.setattr(services, "generate", tutor_with_gap)
+    for message in ["Please help", "I confuse which way the step goes", "I confuse which way the step goes"]:
+        client.post(f"{session_url}/chat", json={"activityId": first["id"], "message": message}).raise_for_status()
+    with factory() as db:
+        assert len(db.get(Activity, first["id"]).private["tutorObservations"]) == 1
+    snapshot = client.get(memory_url)
+    assert 'filename="learner-memory.json"' in snapshot.headers["Content-Disposition"]
+    memory = snapshot.json()["objectives"][first["conceptId"]]
+    assert memory["gap"]["summary"] == summary and memory["status"] == "unassessed"
+    assert "I confuse which way the step goes" not in snapshot.text
+
+    client.post(
+        f"/api/activities/{first['id']}/responses",
+        json={"operationId": "assisted", "expectedLearnerVersion": 0, "choiceId": "a"},
+    ).raise_for_status()
+    assert work_once(factory, services)
+    client.post(f"{session_url}/end").raise_for_status()
+    followup_session = client.post(
+        f"/api/courses/{course_id}/sessions", json={"expectedLearnerVersion": 1}
+    ).json()
+    assert work_once(factory, services)
+    followup = client.get(f"/api/sessions/{followup_session['id']}").json()["activity"]
+    assert followup and "memoryTarget" not in followup
+    assert len(probe_requests) == (1 if probe_passes else 3)
+    with factory() as db:
+        saved = db.get(Activity, followup["id"])
+        assert bool(saved.private["memoryTarget"]) is probe_passes
+        assert saved.private["expertOnDemand"] is False
+    if probe_passes:
+        client.post(
+            f"/api/activities/{followup['id']}/responses",
+            json={"operationId": "probe-answer", "expectedLearnerVersion": 1, "choiceId": "a"},
+        ).raise_for_status()
+        assert work_once(factory, services)
+        memory = client.get(memory_url).json()["objectives"][first["conceptId"]]
+        assert memory["gap"] is None and memory["status"] == "developing"

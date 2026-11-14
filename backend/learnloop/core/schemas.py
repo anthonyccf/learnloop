@@ -1,8 +1,10 @@
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Difficulty = Literal["basic", "intermediate", "advanced"]
+ChoiceId = Literal["a", "b", "c", "d"]
 
 
 class StrictModel(BaseModel):
@@ -19,6 +21,27 @@ class CourseRename(StrictModel):
 
 class DocumentRename(StrictModel):
     title: str = Field(min_length=1, max_length=235, pattern=r"^[^/\\]+$")
+
+
+class ExpertPromptStages(StrictModel):
+    analysis: str = Field(min_length=1, max_length=20000)
+    lesson: str = Field(min_length=1, max_length=20000)
+    questions: str = Field(min_length=1, max_length=20000)
+
+
+class ExpertPromptTemplate(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    agent: Literal["expert"]
+    name: str = Field(min_length=1, max_length=200)
+    prompts: ExpertPromptStages
+    enabledTools: list[str] = Field(default_factory=list, max_length=16)
+    model: str = Field(min_length=1, max_length=200)
+    temperature: float = Field(ge=0, le=2)
+
+
+class DocumentAnalyzeRequest(StrictModel):
+    promptTemplate: ExpertPromptTemplate | None = None
+    force: bool = False
 
 
 class Source(StrictModel):
@@ -100,12 +123,15 @@ class ChoiceScores(StrictModel):
     d: float = Field(ge=0, le=1)
 
 
-class RubricCriterion(StrictModel):
+class WrittenCriterion(StrictModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,40}$")
     description: str = Field(min_length=10, max_length=500)
     weight: int = Field(ge=1, le=5)
-    choiceScores: ChoiceScores
     sources: list[Source] = Field(min_length=1, max_length=4)
+
+
+class RubricCriterion(WrittenCriterion):
+    choiceScores: ChoiceScores
 
 
 class QuestionRubric(StrictModel):
@@ -143,6 +169,70 @@ class Question(StrictModel):
             ):
                 raise ValueError("Only the correct option may meet the full rubric")
         return self
+
+
+class OpenQuestion(StrictModel):
+    format: Literal["open"] = "open"
+    difficulty: Difficulty
+    prompt: str = Field(min_length=10, max_length=1500)
+    explanation: str = Field(min_length=10, max_length=1500)
+    hint: str = Field(min_length=5, max_length=600)
+    sources: list[Source] = Field(min_length=1, max_length=4)
+    referenceAnswer: str = Field(min_length=10, max_length=1500)
+    rubric: list[WrittenCriterion] = Field(min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def unique_criteria(self):
+        if len({criterion.id for criterion in self.rubric}) != len(self.rubric):
+            raise ValueError("Use distinct rubric criterion IDs")
+        return self
+
+
+class MultipleAnswerQuestion(OpenQuestion):
+    format: Literal["multiple_answer"] = "multiple_answer"
+    choices: list[Choice] = Field(min_length=4, max_length=4)
+    correctChoiceIds: list[ChoiceId] = Field(min_length=2, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_options(self):
+        if {c.id for c in self.choices} != set("abcd") or len({c.text.casefold() for c in self.choices}) != 4:
+            raise ValueError("Provide four distinct choices")
+        if len(set(self.correctChoiceIds)) != len(self.correctChoiceIds):
+            raise ValueError("Provide distinct correct choices and at least one distractor")
+        return self
+
+
+class BlankAnswer(StrictModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,40}$")
+    text: str = Field(min_length=1, max_length=400)
+
+
+class BlankKey(StrictModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,40}$")
+    acceptedAnswers: list[Annotated[str, Field(min_length=1, max_length=400)]] = Field(min_length=1, max_length=6)
+    caseSensitive: bool = False
+
+
+class FillInQuestion(OpenQuestion):
+    format: Literal["fill_in"] = "fill_in"
+    blanks: list[BlankKey] = Field(min_length=1, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_blanks(self):
+        ids = {blank.id for blank in self.blanks}
+        if len(ids) != len(self.blanks) or ids != {criterion.id for criterion in self.rubric}:
+            raise ValueError("Use one rubric criterion for each distinct blank ID")
+        markers = re.findall(r"\[\[([^\[\]]+)\]\]", self.prompt)
+        if len(markers) != len(ids) or set(markers) != ids:
+            raise ValueError("Mark every blank exactly once in the prompt using [[id]]")
+        return self
+
+
+class ExpertSolution(StrictModel):
+    uncertain: bool
+    choiceIds: list[ChoiceId] = Field(default_factory=list, max_length=4)
+    blanks: list[BlankAnswer] = Field(default_factory=list, max_length=4)
+    answerText: str = Field(default="", max_length=1500)
 
 
 class CriterionCoverage(StrictModel):
@@ -294,6 +384,7 @@ class ConceptTargetUpdate(StrictModel):
 
 class ContinueSession(StrictModel):
     expectedLearnerVersion: int = Field(ge=0)
+    mixedQuestionFormats: bool = False
 
 
 class StartSession(ContinueSession):
@@ -303,8 +394,30 @@ class StartSession(ContinueSession):
 class SubmitAnswer(StrictModel):
     operationId: str = Field(min_length=1, max_length=100)
     expectedLearnerVersion: int = Field(ge=0)
-    choiceId: Literal["a", "b", "c", "d"]
+    choiceId: ChoiceId | None = None
+    choiceIds: list[ChoiceId] | None = Field(default=None, min_length=1, max_length=4)
+    blanks: list[BlankAnswer] | None = Field(default=None, min_length=1, max_length=4)
+    answerText: str | None = Field(default=None, min_length=1, max_length=4000)
     reasoning: str | None = Field(default=None, min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def one_answer(self):
+        if sum(value is not None for value in (self.choiceId, self.choiceIds, self.blanks, self.answerText)) != 1:
+            raise ValueError("Submit one answer in the activity's question format")
+        if self.reasoning and self.choiceId is None:
+            raise ValueError("Optional reasoning is available for single-answer questions")
+        if self.choiceIds is not None and len(set(self.choiceIds)) != len(self.choiceIds):
+            raise ValueError("Select distinct options")
+        if self.blanks is not None and len({blank.id for blank in self.blanks}) != len(self.blanks):
+            raise ValueError("Fill each blank once")
+        return self
+
+    def typed_answer(self):
+        if self.choiceIds is not None:
+            return {"choiceIds": sorted(self.choiceIds)}
+        if self.blanks is not None:
+            return {"blanks": {blank.id: blank.text for blank in self.blanks}}
+        return {"answerText": self.answerText} if self.answerText is not None else None
 
 
 class LearningGoal(StrictModel):
@@ -344,8 +457,15 @@ class TutorChatRequest(StrictModel):
     history: list[TutorChatTurn] = Field(default_factory=list, max_length=12)
 
 
+class TutorObservation(StrictModel):
+    kind: Literal["strength", "gap"]
+    summary: str = Field(min_length=10, max_length=240)
+    quote: str = Field(min_length=5, max_length=240)
+
+
 class TutorChatReply(StrictModel):
     text: str = Field(min_length=1, max_length=6000)
+    observation: TutorObservation | None = None
 
 
 class RunCommand(StrictModel):
@@ -372,18 +492,17 @@ class CurriculumPlan(StrictModel):
 
 
 class PyramidMaterials(PostMaterials):
-    tests: list[Question] = Field(min_length=6, max_length=6)
-
     @model_validator(mode="after")
-    def complete_bank(self):
-        if any(sum(q.difficulty == level for q in self.tests) != 2
-               for level in ("basic", "intermediate", "advanced")):
-            raise ValueError("Prepare two questions at each assessment difficulty")
-        if len({q.prompt.casefold().strip() for q in self.tests}) != 6:
-            raise ValueError("All six questions must be distinct")
+    def starter_bank(self):
+        if any(q.difficulty != "basic" for q in self.tests):
+            raise ValueError("Prepare two Basic starter questions")
         if any(not q.rubric or not q.referenceAnswer for q in self.tests):
             raise ValueError("Every question requires a rubric and reference answer")
         return self
+
+
+class QuestionKeyCheck(StrictModel):
+    answers: list[Literal["a", "b", "c", "d", "uncertain"]] = Field(min_length=1, max_length=2)
 
 
 class LessonScopeReview(StrictModel):

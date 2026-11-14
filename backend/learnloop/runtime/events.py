@@ -1,13 +1,23 @@
 """Persist only the public event projection, validated against frontend-generated schemas."""
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import select
 
-from learnloop.persistence.database import Job, Run, RunEvent, now, uid
+from learnloop.persistence.database import (
+    Chunk,
+    ChunkEmbedding,
+    Document,
+    Job,
+    Run,
+    RunEvent,
+    now,
+    uid,
+)
 
 CONTRACTS = json.loads(Path(__file__).with_name("agent-contract.schema.json").read_text())
 VALIDATORS = {
@@ -54,13 +64,87 @@ def new_run(db, course, workflow: str, inputs: dict, concept_id=None):
         id=run_id,
         course_id=course.id,
         owner_id=course.owner_id,
-        input={**inputs, "_started_at": now().isoformat()},
+        input={
+            **inputs,
+            "_started_at": now().isoformat(),
+            "_inspection_document_ids": (
+                [inputs["document_id"]]
+                if inputs.get("document_id")
+                else list(inputs.get("document_ids", []))
+            ),
+        },
         snapshot=snapshot,
     )
     db.add(run)
     db.flush()
+    if workflow == "course_preparation" and inputs.get("inspection_changes_only"):
+        run.input = {
+            **run.input,
+            "_inspection_baselines": {
+                doc_id: inspection_record_fingerprints(view)
+                for doc_id, view in inspection_snapshots(db, run).items()
+            },
+        }
     db.add(Job(run_id=run.id))
     return run
+
+
+def inspection_snapshots(db, run):
+    """Freeze the selected documents without storing their embedding vectors."""
+    views = {}
+    for document_id in run.input.get("_inspection_document_ids", []):
+        doc = db.get(Document, document_id)
+        if not doc or doc.course_id != run.course_id:
+            continue
+        chunks = list(
+            db.scalars(select(Chunk).where(Chunk.document_id == doc.id).order_by(Chunk.ordinal))
+        )
+        embeddings = {
+            item.chunk_id: item
+            for item in db.scalars(select(ChunkEmbedding).where(ChunkEmbedding.document_id == doc.id))
+        }
+        views[doc.id] = {
+            "filename": doc.filename,
+            "status": doc.status,
+            "pages": doc.pages,
+            "graph": copy.deepcopy(doc.graph or {}),
+            "chunks": [
+                {
+                    "id": chunk.id,
+                    "ordinal": chunk.ordinal,
+                    "page": chunk.page,
+                    "text": chunk.text,
+                    "embedding": {
+                        "model": embeddings[chunk.id].model,
+                        "dimensions": embeddings[chunk.id].dimensions,
+                    } if chunk.id in embeddings else None,
+                }
+                for chunk in chunks
+            ],
+        }
+    return views
+
+
+def inspection_record_fingerprints(view):
+    """Fingerprint inspectable content without copying private answers to a baseline."""
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    result = {kind: {} for kind in ("source_chunks", "embeddings", "concepts", "lessons", "questions")}
+    for chunk in view.get("chunks", []):
+        result["source_chunks"][chunk["id"]] = digest({k: chunk[k] for k in ("id", "ordinal", "page", "text")})
+        if chunk.get("embedding"):
+            result["embeddings"][chunk["id"]] = digest(chunk["embedding"])
+    graph = view.get("graph", {})
+    for concept in graph.get("concepts", []):
+        result["concepts"][concept["id"]] = digest(concept)
+    for concept_id, pack in graph.get("resources", {}).items():
+        if pack.get("lesson"):
+            result["lessons"][f"lesson:{concept_id}"] = digest(pack["lesson"])
+        for index, question in enumerate(pack.get("tests", [])):
+            key = question.get("id") or f"{concept_id}:question:{index + 1}"
+            result["questions"][key] = digest(question)
+    return result
 
 
 def emit(db, run_id: str, event_type: str, payload: dict):
@@ -156,6 +240,15 @@ def emit(db, run_id: str, event_type: str, payload: dict):
     )
     VALIDATORS["snapshot"].validate(snapshot)
     run.snapshot = snapshot
+    if (
+        event_type == "run.status"
+        and payload["status"] in ("completed", "failed", "needs_review", "paused")
+        and snapshot["workflow"] == "course_preparation"
+    ):
+        # Freeze the selected documents at the checkpoint. Older runs have no
+        # trustworthy historical view and are intentionally not backfilled.
+        db.flush()
+        run.input = {**run.input, "_inspection_snapshots": inspection_snapshots(db, run)}
     db.add(RunEvent(id=event["id"], run_id=run.id, sequence=sequence, data=event))
     db.flush()
     return snapshot

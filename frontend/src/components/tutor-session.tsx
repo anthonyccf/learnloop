@@ -12,6 +12,7 @@ import { PracticeStatus } from "./learning-status";
 import { Icon } from "./icons";
 import { LearningPlan } from "./learning-plan";
 import { AssessmentDetails } from "./assessment-details";
+import { MixedAnswer } from "./mixed-answer";
 
 const stateLabels: Record<string, string> = { unassessed: "Not assessed", developing: "Developing", demonstrated: "Demonstrated", review_due: "Review due" };
 const colors: Record<string, string> = { unassessed: "#e4e9e1", developing: "#edc783", demonstrated: "#438062", review_due: "#d88d75" };
@@ -137,7 +138,7 @@ export function TutorSession() {
     });
   }
   async function submitAnswer(id: string) {
-    if (!session || !activity || activity.status !== "pending" || lock.current) return;
+    if (!session || !activity || activity.format || activity.status !== "pending" || lock.current) return;
     const answer = activity.choices.find(item => item.id === id);
     if (!answer) return;
     follow.current = true;
@@ -171,7 +172,7 @@ export function TutorSession() {
   function sendDraft() {
     const text = draft.trim();
     if (!text || !canChat) return;
-    const answer = stage === "assess" && activity?.status === "pending"
+    const answer = stage === "assess" && activity?.status === "pending" && !activity.format
       ? activity.choices.find(item => item.id.toLowerCase() === text.toLowerCase() || item.text.toLowerCase() === text.toLowerCase()) : null;
     if (answer) void submitAnswer(answer.id);
     else void sendChat(text, failedChat?.text === text ? failedChat.id : undefined);
@@ -201,12 +202,15 @@ export function TutorSession() {
               </>}
               {message.kind === "question" && item && <>
                 <p className="tutor-chat-topic">A QUICK CHECK · {item.difficulty}</p><RichText className="tutor-question">{item.prompt}</RichText>
-                <fieldset className="tutor-answers" disabled={busy || activity?.id !== item.id || activity.status !== "pending" || session?.status !== "active"}>
+                {item.format ? activity?.id === item.id && <MixedAnswer key={item.id} activity={activity} courseId={courseId} saved={session?.answer} disabled={busy || activity.status !== "pending" || session?.status !== "active"} onSubmit={submit => void act(async () => {
+                  await submit();
+                  if (session) acceptSession(await api<StudySession>(`sessions/${session.id}`));
+                }, "save")} /> : <fieldset className="tutor-answers" disabled={busy || activity?.id !== item.id || activity.status !== "pending" || session?.status !== "active"}>
                   <legend>Choose an answer, or type its letter below.</legend>{item.choices.map((option, index) => <label key={option.id} className={activity?.id === item.id && (session?.selectedChoiceId || choice) === option.id ? "selected" : ""}>
                     <input type="radio" name={`tutor-answer-${item.id}`} checked={activity?.id === item.id && (session?.selectedChoiceId || choice) === option.id} onChange={() => setChoice(option.id)} /><span aria-hidden="true">{String.fromCharCode(65 + index)}</span><RichText>{option.text}</RichText>
                   </label>)}
-                </fieldset>
-                {item.id === activity?.id && activity.status === "pending" && <label className="answer-reasoning">Explain your choice (optional)<textarea rows={3} maxLength={4000} value={reasoning} disabled={busy} onChange={event => setReasoning(event.target.value)} placeholder="What led you to this answer?" /></label>}
+                </fieldset>}
+                {!item.format && item.id === activity?.id && activity.status === "pending" && <label className="answer-reasoning">Explain your choice (optional)<textarea rows={3} maxLength={4000} value={reasoning} disabled={busy} onChange={event => setReasoning(event.target.value)} placeholder="What led you to this answer?" /></label>}
               </>}
               {message.kind === "feedback" && message.assessment && <>
                 <p className="tutor-chat-topic">YOUR ANSWER REVIEW</p><h3>{message.assessment.uncertain ? "Let’s check this once more" : message.assessment.correct && (message.assessment.rubricScore ?? 1) >= 1 ? "That’s coming together!" : "Let’s work through this together"}</h3>
@@ -214,7 +218,7 @@ export function TutorSession() {
               </>}
             </ChatBubble>;
           })}
-          {!session && <ChatBubble role="tutor"><p>{messages.length ? "Where would you like to pick up?" : "Where shall we start? Choose a topic, or let me find a useful next step."}</p><label className="tutor-focus">Session focus<select value={focus} disabled={busy} onChange={event => setFocus(event.target.value)}><option value="">Let my tutor choose</option>{course?.graph.concepts.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><button className="button dark" disabled={busy || !learner || !course?.graph.concepts.length} onClick={() => { follow.current = true; void act(async () => { const next = await api<StudySession>(`courses/${courseId}/sessions`, { expectedLearnerVersion: await version(), ...(focus ? { conceptId: focus } : {}) }); say(focus ? `Let’s work on ${course?.graph.concepts.find(item => item.id === focus)?.title}.` : "Let’s get started. Choose a useful next step for me."); acceptSession(next); if (mounted.current) { setChoice(""); setFailedChat(null); } }); }}>Start or resume session<Icon name="arrow" size={16} /></button>{!course?.graph.concepts.length && <p>Prepare your <Link href="/materials">course materials</Link> to begin.</p>}</ChatBubble>}
+          {!session && <ChatBubble role="tutor"><p>{messages.length ? "Where would you like to pick up?" : "Where shall we start? Choose a topic, or let me find a useful next step."}</p><label className="tutor-focus">Session focus<select value={focus} disabled={busy} onChange={event => setFocus(event.target.value)}><option value="">Let my tutor choose</option>{course?.graph.concepts.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label><button className="button dark" disabled={busy || !learner || !course?.graph.concepts.length} onClick={() => { follow.current = true; void act(async () => { const next = await api<StudySession>(`courses/${courseId}/sessions`, { expectedLearnerVersion: await version(), mixedQuestionFormats: true, ...(focus ? { conceptId: focus } : {}) }); say(focus ? `Let’s work on ${course?.graph.concepts.find(item => item.id === focus)?.title}.` : "Let’s get started. Choose a useful next step for me."); acceptSession(next); if (mounted.current) { setChoice(""); setFailedChat(null); } }); }}>Start or resume session<Icon name="arrow" size={16} /></button>{!course?.graph.concepts.length && <p>Prepare your <Link href="/materials">course materials</Link> to begin.</p>}</ChatBubble>}
           {session?.notice && <p className="tutor-chat-notice" role="status">{session.notice}</p>}
           {(busy || (session && !activity && !session.notice) || activity?.status === "submitted") && <ChatBubble role="tutor"><div className="tutor-chat-thinking" role="status"><span aria-hidden="true">•••</span>{pendingTask === "chat" ? "Thinking about your question…" : pendingTask === "hint" ? "Finding a helpful nudge…" : activity?.status === "submitted" || pendingTask === "save" ? "Reviewing your answer…" : "Preparing your next learning step…"}</div></ChatBubble>}
           {session && !busy && (!activity || activity.status === "submitted") && <PracticeStatus session={session} />}
@@ -226,9 +230,9 @@ export function TutorSession() {
             {stage === "teach" && <button onClick={revealQuestion}>I’m ready to try<Icon name="arrow" size={13} /></button>}
             {stage === "assess" && activity?.status === "pending" && <>
               <button onClick={() => { if (!activity || !session) return; say("Could I have a hint?"); void act(async () => { const result = await api<{ hint: string }>(`activities/${activity.id}/hint`, {}); addMessage({ id: crypto.randomUUID(), role: "tutor", kind: "text", text: result.hint }); acceptSession(await api<StudySession>(`sessions/${session.id}`)); }, "hint"); }}><Icon name="hint" size={14} />Give me a hint</button>
-              {choice && <button className="tutor-chat-send-choice" onClick={() => void submitAnswer(choice)}>Send answer<Icon name="arrow" size={13} /></button>}
+              {!activity.format && choice && <button className="tutor-chat-send-choice" onClick={() => void submitAnswer(choice)}>Send answer<Icon name="arrow" size={13} /></button>}
             </>}
-            {stage === "review" && <button onClick={() => { if (!session) return; say("Let’s continue learning."); void act(async () => { await api(`sessions/${session.id}/next`, { expectedLearnerVersion: await version() }); if (mounted.current) { setChoice(""); setDraft(""); setFailedChat(null); operation.current = null; } acceptSession(await api<StudySession>(`sessions/${session.id}`)); }); }}>Continue learning<Icon name="arrow" size={13} /></button>}
+            {stage === "review" && <button onClick={() => { if (!session) return; say("Let’s continue learning."); void act(async () => { await api(`sessions/${session.id}/next`, { expectedLearnerVersion: await version(), mixedQuestionFormats: true }); if (mounted.current) { setChoice(""); setDraft(""); setFailedChat(null); operation.current = null; } acceptSession(await api<StudySession>(`sessions/${session.id}`)); }); }}>Continue learning<Icon name="arrow" size={13} /></button>}
             <button onClick={() => void sendChat("Could you explain that in a simpler way?")}>Explain another way</button>
             <button onClick={() => void sendChat("Can you walk me through a different example?")}>Show me an example</button>
           </div>}

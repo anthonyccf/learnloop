@@ -118,8 +118,9 @@ def test_grounding_repairs_stop_after_three_rejections_and_keep_diagnostics():
             PASSAGES,
             candidate=ITEM,
         )
-    assert calls.count(GroundingReview) == 3 and calls.count(dict) == 2
+    assert calls.count(GroundingReview) == 6 and calls.count(dict) == 2
     assert failure.value.details["review"]["status"] == "uncertain"
+    assert failure.value.details["secondReview"]["status"] == "uncertain"
     assert not failure.value.retryable
 
 

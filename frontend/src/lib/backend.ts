@@ -3,7 +3,7 @@ export type Course = { id: string; title: string };
 export type Difficulty = "basic" | "intermediate" | "advanced";
 export type Reference = { documentId: string; label: string; page?: number };
 export type CourseDetail = Course & {
-  documents: { id: string; filename: string; status: string; pages: number; lessonCount: number; postLessonCount?: number; testCount: number;
+  documents: { id: string; filename: string; status: string; pages: number; lessonCount: number; postLessonCount?: number; testCount: number; sourceWarnings?: { conceptId: string; title?: string; message: string }[];
     coverage?: { analysisVersion?: number; processedPassages?: number; selectedPassages?: number; totalPassages?: number; reviewedSections?: number; totalSections?: number } }[];
   graph: { concepts: { id: string; title: string; summary: string; curriculum?: CurriculumObjective | null; targetDifficulty?: Difficulty; sources: { chunkId: string; quote: string }[] }[];
     prerequisites: { prerequisite: string; dependent: string; rationale?: string }[];
@@ -30,9 +30,22 @@ export type LearningPlan = { version: number; goal: { description: string; conce
   activityIds?: string[]; reviewDates?: Record<string, string>; stale?: boolean;
   selected?: { title: string; action: string; difficulty: Difficulty; objective: string } | null; reason?: string;
 };
+export type QuizTarget = { conceptId: string; title: string };
+type Prerequisite = QuizTarget & { difficulty: Difficulty; state: string };
+export type PrerequisiteBlock = {
+  code: "unmet_prerequisites"; message: string; requested: QuizTarget;
+  prerequisites: Prerequisite[]; nextStep: Prerequisite | null;
+};
+export class PrerequisiteBlockedError extends Error {
+  constructor(readonly block: PrerequisiteBlock) { super(block.message); }
+}
+export type SavedMixedAnswer = { choiceIds?: string[]; blanks?: Record<string, string>; answerText?: string };
+export type QuestionFormat = "multiple_answer" | "fill_in" | "open";
 export type StudySession = { id: string; courseId: string; status: string; runIds: string[]; targetConceptId?: string | null; assessment: Assessment | null; selectedChoiceId?: string | null; notice?: string | null; plan?: LearningPlan;
-  activity: { id: string; conceptId: string; status: string; hintUsed: boolean; difficulty: string; prompt: string; choices: { id: string; text: string }[]; sources: Reference[]; action?: string; rationale?: string; objective?: string; extendedTopic?: boolean; extensionReason?: string | null } | null };
-export type RunSummary = { id: string; workflow: string; status: string; summary: string; startedAt?: string | null; documentId?: string | null; sessionId?: string | null };
+  prerequisiteBlock?: PrerequisiteBlock;
+  answer?: SavedMixedAnswer;
+  activity: { id: string; conceptId: string; status: string; hintUsed: boolean; difficulty: string; prompt: string; choices: { id: string; text: string }[]; sources: Reference[]; action?: string; rationale?: string; objective?: string; extendedTopic?: boolean; extensionReason?: string | null; format?: QuestionFormat; blankIds?: string[] } | null };
+export type RunSummary = { id: string; workflow: string; status: string; summary: string; startedAt?: string | null; documentId?: string | null; sessionId?: string | null; templateName?: string | null; model?: string | null; temperature?: number | null; modelsUsed?: string[] };
 export type LearningMaterial = {
   curriculum?: CurriculumObjective | null;
   conceptId: string; documentId: string; filename: string; questionCount: number; sources: Reference[];
@@ -56,6 +69,9 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   });
   const data = await response.json().catch(() => null);
+  if (response.status === 409 && data?.detail?.code === "unmet_prerequisites") {
+    throw new PrerequisiteBlockedError(data.detail);
+  }
   if (!response.ok) throw new Error(typeof data?.detail === "string" ? data.detail : `Request failed (${response.status}). Please refresh and retry.`);
   if (data == null) throw new Error("The learning server returned an unreadable response. Please refresh and retry.");
   return data as T;

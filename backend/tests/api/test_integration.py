@@ -186,7 +186,7 @@ def test_expert_prepares_lessons_and_private_tests_for_tutor(stack):
     learning = client.get(f"/api/courses/{course_id}/materials").json()
     assert learning["expectedCount"] == 1 and len(learning["materials"]) == 1
     material = learning["materials"][0]
-    assert material["questionCount"] == 6
+    assert material["questionCount"] == 2
     assert material["lesson"]["workedExample"]["steps"]
     assert material["lesson"]["flashcards"] and material["sources"][0]["page"] == 1
     public = json.dumps(learning)
@@ -462,6 +462,92 @@ def test_retry_receipts_and_sse_replay_match_frontend_contract(stack):
     )
     with factory() as db:
         assert db.scalar(select(func.count()).select_from(Chunk)) == 1
+
+
+def test_course_preparation_retry_sends_failure_feedback_to_expert(stack, monkeypatch):
+    from learnloop.core.errors import ServiceError
+    from learnloop.core.schemas import SectionGraph
+
+    client, factory, services, settings = stack
+    course_id = client.post("/api/courses", json={"title": "Review feedback retry"}).json()["id"]
+    uploaded = client.post(
+        f"/api/courses/{course_id}/documents",
+        files={"file": ("notes.txt", COURSE_TEXT.encode())},
+    ).json()
+    original_generate = services.generate
+    calls = []
+
+    def generate(role, instruction, context, output):
+        if output is SectionGraph:
+            calls.append((instruction, context))
+            if len(calls) == 1:
+                raise ServiceError(
+                    "review_rejected",
+                    "Add a logical-to-physical block mapping example.",
+                    False,
+                    details={"review": "Show the request table guiding retrieval."},
+                )
+        return original_generate(role, instruction, context, output)
+
+    monkeypatch.setattr(services, "generate", generate)
+    assert work_once(factory, services)
+    run = client.get(f"/api/agent-activity/runs/{uploaded['runId']}").json()
+    assert run["status"] == "needs_review" and run["allowedCommands"] == ["retry"]
+
+    response = client.post(
+        f"/api/agent-activity/runs/{uploaded['runId']}/commands",
+        json={
+            "kind": "retry",
+            "operationId": "retry-with-review-feedback",
+            "expectedVersion": run["recordVersion"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert work_once(factory, services)
+
+    retry_instruction, retry_context = calls[1]
+    feedback = retry_context["previousRunFailure"]
+    assert feedback["message"] == "Add a logical-to-physical block mapping example."
+    assert feedback["details"]["review"] == "Show the request table guiding retrieval."
+    assert "previous run attempt was interrupted" in retry_instruction
+    assert client.get(f"/api/agent-activity/runs/{uploaded['runId']}").json()["status"] == "completed"
+
+
+def test_course_preparation_allows_five_retries(stack, monkeypatch):
+    from learnloop.core.errors import ServiceError
+    from learnloop.core.schemas import SectionGraph
+    from learnloop.persistence.database import Job
+
+    client, factory, services, settings = stack
+    course_id = client.post("/api/courses", json={"title": "Retry limit"}).json()["id"]
+    uploaded = client.post(
+        f"/api/courses/{course_id}/documents",
+        files={"file": ("notes.txt", COURSE_TEXT.encode())},
+    ).json()
+
+    def reject(*args, **kwargs):
+        raise ServiceError("review_rejected", "Please revise this section.", False)
+
+    monkeypatch.setattr(services, "generate", reject)
+    for attempt in range(6):
+        assert work_once(factory, services)
+        run = client.get(f"/api/agent-activity/runs/{uploaded['runId']}").json()
+        expected_commands = ["retry"] if attempt < 5 else []
+        assert run["allowedCommands"] == expected_commands
+        if attempt < 5:
+            response = client.post(
+                f"/api/agent-activity/runs/{uploaded['runId']}/commands",
+                json={
+                    "kind": "retry",
+                    "operationId": f"retry-limit-{attempt}",
+                    "expectedVersion": run["recordVersion"],
+                },
+            )
+            assert response.status_code == 200, response.text
+
+    with factory() as db:
+        job = db.query(Job).filter_by(run_id=uploaded["runId"]).one()
+        assert job.attempts == 6
 
 
 def test_stale_version_rejected_and_new_session_resumes_existing_activity(stack):

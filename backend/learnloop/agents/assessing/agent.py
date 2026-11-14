@@ -9,12 +9,14 @@ import copy
 
 from sqlalchemy import select
 
+from learnloop.agents.assessing.mixed_answers import assess_mixed
 from learnloop.agents.assessing.prompts import FEEDBACK_PROMPT
 from learnloop.agents.question_review import question_review_valid, review_question
 from learnloop.agents.rubrics import ensure_rubric, validate_assessment
 from learnloop.core.domain import WEAKNESS_FAILURE_THRESHOLD, assess_evidence, effective_state
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import source_ids
+from learnloop.core.question_formats import parse_question
 from learnloop.core.schemas import Assessment, Question
 from learnloop.persistence.database import (
     Activity,
@@ -52,7 +54,7 @@ def run(factory, services, run_id):
                 "Evaluate the response and persisted hint usage against the server-held answer key.",
                 "assess_response",
             )
-        correct = submission.choice_id == activity.private["correctChoiceId"]
+        correct = submission.choice_id == activity.private.get("correctChoiceId")
         state = learner(db, session.course_id, session.owner_id)
         evidence_version = state.version
         prior = copy.deepcopy(
@@ -60,6 +62,7 @@ def run(factory, services, run_id):
         )
         detail = db.get(ResponseDetail, submission.id)
         reasoning = detail.reasoning if detail else None
+        typed_answer = detail.answer if detail else None
         timing = detail.timing if detail else {"responseTimeMs": None, "basis": "unavailable"}
         history = list(
             db.scalars(
@@ -136,24 +139,27 @@ def run(factory, services, run_id):
                         )
                     passages.update(resolved)
                 sources = [{"chunkId": id, "quote": c["text"][:600]} for id, c in passages.items()]
-            question = {
-                "prompt": activity.public["prompt"],
-                "choices": activity.public["choices"],
-                "correctChoiceId": activity.private["correctChoiceId"],
-                "explanation": activity.private["explanation"],
-                "hint": activity.private["hint"],
-                "sources": sources,
-            }
             receipt = activity.private.get("grounding")
-            if saved_question and "difficulty" in saved_question:
-                question["difficulty"] = activity.difficulty
-            if saved_question and saved_question.get("rubric"):
-                question["rubric"] = saved_question["rubric"]
-                question["referenceAnswer"] = saved_question["referenceAnswer"]
+            if saved_question and saved_question.get("format"):
+                question = saved_question
+            else:
+                question = {
+                    "prompt": activity.public["prompt"],
+                    "choices": activity.public["choices"],
+                    "correctChoiceId": activity.private["correctChoiceId"],
+                    "explanation": activity.private["explanation"],
+                    "hint": activity.private["hint"],
+                    "sources": sources,
+                }
+                if saved_question and "difficulty" in saved_question:
+                    question["difficulty"] = activity.difficulty
+                if saved_question and saved_question.get("rubric"):
+                    question["rubric"] = saved_question["rubric"]
+                    question["referenceAnswer"] = saved_question["referenceAnswer"]
     if not already_assessed:
-        rubric_question = ensure_rubric(
-            services, Question.model_validate(question), list(passages.values())
-        )
+        rubric_question = parse_question(question)
+        if isinstance(rubric_question, Question):
+            rubric_question = ensure_rubric(services, rubric_question, list(passages.values()))
         question = rubric_question.model_dump()
         reviewed_receipt = review_question(services, "Assessing", question, passages, receipt)
         context["extendedTopic"] = reviewed_receipt["status"] == "extended"
@@ -161,15 +167,14 @@ def run(factory, services, run_id):
         context["difficulty"] = activity.difficulty
         context["rubric"] = [c.model_dump() for c in rubric_question.rubric]
         context["referenceAnswer"] = rubric_question.referenceAnswer
-        output = services.generate(
-            "Assessing",
-            FEEDBACK_PROMPT,
-            context,
-            Assessment,
-        )
-        coverage, score = validate_assessment(
-            rubric_question, output, submission.choice_id, reasoning
-        )
+        if isinstance(rubric_question, Question):
+            output = services.generate("Assessing", FEEDBACK_PROMPT, context, Assessment)
+            coverage, score = validate_assessment(rubric_question, output, submission.choice_id, reasoning)
+        else:
+            if not typed_answer:
+                raise ServiceError("missing_answer", "The saved response is missing its typed answer.", False)
+            output, coverage, score = assess_mixed(services, rubric_question, context, typed_answer)
+            correct = score >= 1.0
         rubric_met = score >= 1.0
         partial = 0 < score < 1.0
         contradiction = bool(

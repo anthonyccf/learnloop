@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 from sqlalchemy import select
 from learnloop.agents.expert.curriculum import validate_curriculum
-from learnloop.agents.expert.materials import MATERIALS_VERSION, material_valid, difficulty_complete
+from learnloop.agents.expert.materials import MATERIALS_VERSION, material_valid, starter_complete
 from learnloop.core.config import get_settings
 from learnloop.persistence.database import session_factory, Course, Document, Chunk, Run
 from learnloop.persistence.repository import course_graph
@@ -29,7 +29,7 @@ def main():
             for d in docs:
                 chunks = {c.id: {'text': c.text} for c in db.scalars(select(Chunk).where(Chunk.document_id == d.id))}
                 for id, pack in d.graph.get('resources', {}).items():
-                    if pack.get('version') != MATERIALS_VERSION or not material_valid(pack, chunks) or not difficulty_complete(pack):
+                    if pack.get('version') != MATERIALS_VERSION or not material_valid(pack, chunks) or not starter_complete(pack):
                         issues.append('Invalid material: ' + id)
                     if pack.get('lessonsByDifficulty'):
                         issues.append('Unexpected repeated level variants: ' + id)

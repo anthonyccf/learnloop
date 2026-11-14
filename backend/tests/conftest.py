@@ -24,6 +24,7 @@ from learnloop.core.schemas import (
     PostMaterials,
     PyramidMaterials,
     Question,
+    QuestionKeyCheck,
     QuestionRubric,
     SectionGraph,
     TopicOrganization,
@@ -68,6 +69,8 @@ class FakeServices:
             return GroundingReview(
                 status=self.grounding_status, summary="Controlled source review result."
             )
+        if output is QuestionKeyCheck:
+            return QuestionKeyCheck(answers=["a"] * len(context["questions"]))
         if output is ExtendedTopicReview:
             return ExtendedTopicReview(
                 approved=False, reason="This test question is not an approved extension."
@@ -216,7 +219,8 @@ class FakeServices:
                     self.generate(role, instruction, {**context, "difficulty": level}, Question)
                     for level in (
                         ["basic", "basic", "intermediate", "intermediate", "advanced", "advanced"]
-                        if output in (DifficultyMaterials, PyramidMaterials)
+                        if output is DifficultyMaterials
+                        else ["basic", "basic"] if output is PyramidMaterials
                         else ["intermediate", "intermediate"]
                     )
                 ],

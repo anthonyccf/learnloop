@@ -68,6 +68,8 @@ def build_router(context: ApiContext):
 
     @router.post("/api/activities/{activity_id}/responses", status_code=202)
     def answer(activity_id: str, body: SubmitAnswer, principal=Depends(owner)):
+        choice_id = body.choiceId or ""
+        typed_answer = body.typed_answer()
         with factory.begin() as db:
             activity = owned(db, Activity, activity_id, principal)
             session = db.get(StudySession, activity.session_id)
@@ -86,9 +88,9 @@ def build_router(context: ApiContext):
                     existing.activity_id,
                     existing.choice_id,
                     existing.expected_version,
-                ) != (activity_id, body.choiceId, body.expectedLearnerVersion) or (
+                ) != (activity_id, choice_id, body.expectedLearnerVersion) or (
                     detail.reasoning if detail else None
-                ) != body.reasoning:
+                ) != body.reasoning or (detail.answer if detail else None) != typed_answer:
                     raise HTTPException(409, "Operation ID already belongs to a different request.")
                 run = next(
                     r
@@ -105,14 +107,24 @@ def build_router(context: ApiContext):
             state = learner(db, course.id, principal, lock=True)
             if state.version != body.expectedLearnerVersion:
                 raise HTTPException(409, "Learner state changed. Refresh before submitting.")
-            if body.choiceId not in {c["id"] for c in activity.public["choices"]}:
-                raise HTTPException(422, "Choose one of the provided options.")
+            question_format = activity.public.get("format", "single_answer")
+            available = {c["id"] for c in activity.public["choices"]}
+            if question_format == "single_answer":
+                valid = body.choiceId in available
+            elif question_format == "multiple_answer":
+                valid = body.choiceIds is not None and set(body.choiceIds) <= available
+            elif question_format == "fill_in":
+                valid = body.blanks is not None and {blank.id for blank in body.blanks} == set(activity.public["blankIds"])
+            else:
+                valid = question_format == "open" and body.answerText is not None
+            if not valid:
+                raise HTTPException(422, "Submit an answer that matches this question's format.")
             submission = Submission(
                 activity_id=activity.id,
                 owner_id=principal,
                 operation_id=body.operationId,
                 expected_version=body.expectedLearnerVersion,
-                choice_id=body.choiceId,
+                choice_id=choice_id,
             )
             db.add(submission)
             db.flush()
@@ -127,6 +139,7 @@ def build_router(context: ApiContext):
                 ResponseDetail(
                     submission_id=submission.id,
                     reasoning=body.reasoning,
+                    answer=typed_answer,
                     timing={
                         "startedAt": start,
                         "submittedAt": submitted_at.isoformat(),
@@ -153,10 +166,12 @@ def build_router(context: ApiContext):
     def get_submission(submission_id: str, principal=Depends(owner)):
         with factory() as db:
             submission = owned(db, Submission, submission_id, principal)
+            detail = db.get(ResponseDetail, submission.id)
             return {
                 "id": submission.id,
                 "activityId": submission.activity_id,
-                "choiceId": submission.choice_id,
+                "choiceId": submission.choice_id or None,
+                **({"answer": detail.answer} if detail and detail.answer else {}),
                 "status": "assessed" if submission.assessment else "pending",
                 "assessment": submission.assessment or None,
             }
@@ -166,9 +181,10 @@ def build_router(context: ApiContext):
         with factory() as db:
             owned(db, Course, course_id, principal)
             rows = db.execute(
-                select(Submission, Activity)
+                select(Submission, Activity, ResponseDetail.answer)
                 .join(Activity, Submission.activity_id == Activity.id)
                 .join(StudySession, Activity.session_id == StudySession.id)
+                .outerjoin(ResponseDetail, ResponseDetail.submission_id == Submission.id)
                 .where(
                     StudySession.course_id == course_id,
                     Submission.owner_id == principal,
@@ -181,11 +197,12 @@ def build_router(context: ApiContext):
                     "activityId": a.id,
                     "conceptId": a.concept_id,
                     "difficulty": a.difficulty,
-                    "choiceId": s.choice_id,
+                    "choiceId": s.choice_id or None,
+                    **({"answer": answer} if answer else {}),
                     "at": s.created_at.isoformat(),
                     "assessment": s.assessment or None,
                 }
-                for s, a in rows
+                for s, a, answer in rows
             ]
 
     return router

@@ -114,18 +114,20 @@ def run(factory, services, run_id):
         deduplicate_course(factory, services, run_id, document_id)
         organize_course(factory, services, run_id, document_id)
         prepare_curriculum(factory, services, run_id, document_id)
+        source_warnings = []
         for document_id in document_ids:
             with factory.begin() as db:
                 current_run = db.get(Run, run_id)
                 current_run.input = {**current_run.input, "document_id": document_id}
-            prepare_materials(factory, services, run_id, document_id, finalize=False)
+            source_warnings.extend(prepare_materials(factory, services, run_id, document_id, finalize=False))
         with factory.begin() as db:
-            publish_course(db, db.get(Run, run_id).course_id, run_id)
+            if not source_warnings:
+                publish_course(db, db.get(Run, run_id).course_id, run_id)
             run_status(
                 db,
                 run_id,
                 "completed",
-                "The connected learning pyramid, lessons and tests are ready.",
+                "Preparation finished with source review warnings. Review the affected course materials before publication." if source_warnings else "The connected learning pyramid, lessons and tests are ready.",
             )
         return
     prepare_graph(factory, services, run_id)
@@ -144,13 +146,15 @@ def run(factory, services, run_id):
                 )
             )
         )
+    source_warnings = []
     for document_id in document_ids:
         with factory.begin() as db:
             current_run = db.get(Run, run_id)
             current_run.input = {**current_run.input, "document_id": document_id}
-        prepare_materials(factory, services, run_id, document_id, finalize=False)
+        source_warnings.extend(prepare_materials(factory, services, run_id, document_id, finalize=False))
     with factory.begin() as db:
-        publish_course(db, course_id, run_id)
+        if not source_warnings:
+            publish_course(db, course_id, run_id)
         run_status(
-            db, run_id, "completed", "The connected learning pyramid, lessons and tests are ready."
+            db, run_id, "completed", "Preparation finished with source review warnings. Review the affected course materials before publication." if source_warnings else "The connected learning pyramid, lessons and tests are ready."
         )

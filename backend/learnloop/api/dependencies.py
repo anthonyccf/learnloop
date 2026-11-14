@@ -8,10 +8,12 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
+from learnloop.core.domain import prerequisite_block
 from learnloop.core.planning import candidates
 from learnloop.persistence.database import (
     Activity,
     Course,
+    ResponseDetail,
     Run,
     StudySession,
     Submission,
@@ -70,18 +72,21 @@ class ApiContext:
             if run.input.get("session_id") == session_id
         ]
 
-    def session_target(self, runs):
+    def latest_activity_run(self, runs):
         focused = [r for r in runs if r.snapshot["workflow"] == "next_activity"]
         if not focused:
             return None
-        latest = max(
+        return max(
             focused,
             key=lambda r: (
                 r.input.get("_started_at")
                 or next((e["at"] for e in r.snapshot.get("events", [])), "")
             ),
         )
-        return latest.input.get("target_concept_id")
+
+    def session_target(self, runs):
+        latest = self.latest_activity_run(runs)
+        return latest.input.get("target_concept_id") if latest else None
 
     def session_view(self, db, session):
         activity = (
@@ -92,24 +97,20 @@ class ApiContext:
             if activity
             else None
         )
+        detail = db.get(ResponseDetail, submission.id) if submission and not submission.choice_id else None
         runs = self.runs_for_session(db, session.id)
         target = self.session_target(runs)
         plan = get_plan(db, session.course_id, session.owner_id)
-        notice = None
-        if (
-            not activity
-            and (not any((r.snapshot["status"] in ("queued", "running", "paused") for r in runs)))
-            and (
-                not candidates(
-                    course_graph(db, session.course_id, session.release_id),
-                    learner(db, session.course_id, session.owner_id).evidence,
-                    plan.goal if plan else None,
-                    target,
-                    review_dates=plan.data.get("reviewDates") if plan else None,
-                )
-            )
-        ):
-            notice = "No further eligible questions are available right now. Review your progress or return when review is due."
+        notice, blocked = None, None
+        if not activity and not any(r.snapshot["status"] in ("queued", "running", "paused") for r in runs):
+            graph = course_graph(db, session.course_id, session.release_id)
+            evidence = learner(db, session.course_id, session.owner_id).evidence
+            blocked = prerequisite_block(graph, evidence, target)
+            if not blocked and not candidates(
+                graph, evidence, plan.goal if plan else None, target,
+                review_dates=plan.data.get("reviewDates") if plan else None,
+            ):
+                notice = "No further eligible questions are available right now. Review your progress or return when review is due."
         return {
             "id": session.id,
             "courseId": session.course_id,
@@ -117,8 +118,10 @@ class ApiContext:
             "status": session.status,
             "activity": public_activity(activity),
             "assessment": submission.assessment if submission and submission.assessment else None,
-            "selectedChoiceId": submission.choice_id if submission else None,
+            "selectedChoiceId": (submission.choice_id or None) if submission else None,
+            **({"answer": detail.answer} if detail and detail.answer else {}),
             "notice": notice,
+            **({"prerequisiteBlock": blocked} if blocked else {}),
             "targetConceptId": target,
             "runIds": [run.id for run in runs],
             "plan": public_plan(plan),

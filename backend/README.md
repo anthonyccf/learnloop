@@ -59,7 +59,9 @@ The Learn page displays a pyramid with layer counts and prerequisite lesson link
 
 `python -m scripts.validation.pyramid` audits the local owner's saved curricula and materials without changing them. It checks layer counts, complete objective coverage, prerequisite paths, current material versions, source receipts, question-bank coverage and duplicate primary explanations, and writes `../tmp/pyramid-validation.json`. Earlier learning-post/difficulty validation scripts describe previous material versions.
 
-`GET /api/courses/{id}/materials` returns lessons, slide references, and test counts, with no test answer keys. Only packs with current grounding receipts are returned and counted as ready. For older packs, `POST /api/documents/{id}/materials` reviews their saved content and preserves valid lessons/tests; unsupported or uncertain packs remain withheld and are flagged in document review. Review calls use the configured generation service and add model latency/cost; unchanged saved receipts avoid repeat reviews during preparation and assessment. Existing published documents can be upgraded with `POST /api/documents/{id}/materials`; repeated requests reuse a pending run. New uploads prepare both automatically. The Tutor assigns unused Expert questions first, then generates adaptive questions when that bank is exhausted. `/api/documents/{id}/review` also excludes private tests.
+`GET /api/courses/{id}/materials` returns lessons, slide references, and test counts. For older packs, `POST /api/documents/{id}/materials` reviews saved content and reuses valid lessons and questions. Unsupported or uncertain packs stay unpublished and appear in document review. New uploads prepare a lesson and two Basic starter questions per objective. The Tutor checks saved questions at the selected difficulty before asking the Expert to generate another from the pinned course sources. The materials and document review APIs keep answer keys and rubrics private.
+
+`GET /api/courses/{id}/learner-memory` downloads an owner-scoped JSON summary of demonstrated strengths, review dates, and suspected gaps. The Tutor saves observations from chat separately from graded evidence. It can request a private Expert question to check a specific gap. Tutor observations alone never change mastery.
 
 1. `POST /api/courses`, JSON `{ "title": "Training & optimization" }`.
 2. `POST /api/courses/{id}/documents`, multipart field `file`, a readable PDF or UTF-8 `.txt`. Returns `documentId` and `runId`. The document and Expert job persist together. Identical content in the same course returns the original document/run.
@@ -75,7 +77,7 @@ Discover runs with `GET /api/courses/{id}/runs`. Snapshot: `/api/agent-activity/
 
 Run summaries include `startedAt`, `documentId`, and `sessionId` for contextual status in the learning UI. New runs store an internal creation timestamp in their input JSON; older summaries fall back to their first event timestamp. The public projection does not expose the remaining run inputs or private test data.
 
-To practice a particular lesson, pass optional `conceptId` to `POST /api/courses/{id}/sessions`. The server validates course ownership, publication and prerequisites at each parent's target difficulty before changing anything. Unknown topics return 404; blocked prerequisites or a submitted answer awaiting assessment return 409 with a clear explanation. Focus is saved in the session's next-activity run inputs and exposed as `targetConceptId`. Explicit focused review may include an already demonstrated concept, but prerequisite checks still apply. Next question retains focus. Switching topics preserves pending activities, and switching back reuses an unanswered question. A stale tab cannot submit or request a hint for a non-current activity. No schema migration is needed, and existing general sessions remain adaptive.
+To practice a particular lesson, pass optional `conceptId` to `POST /api/courses/{id}/sessions`. A blocked launch returns `409` with `detail.code = "unmet_prerequisites"`, the requested topic, unmet prerequisites with their required difficulties, and an eligible `nextStep` when available. The same check applies when requesting a new focused question and again before the worker commits an assignment. An already assigned current question can still be completed. The session's pinned release determines which prerequisite rules apply. Focus is exposed as `targetConceptId`. Switching to an eligible topic preserves unanswered activities, and a stale tab cannot submit or request a hint for a non-current activity.
 
 ## Structure and durability
 
@@ -111,7 +113,7 @@ The loader resolves `backend/.env` independently of the current folder. `.env` i
 
 Settings: `DATABASE_URL` (defaults to `sqlite:///data/learnloop.db`), `API_TOKEN`, `LOCAL_OWNER_ID`, `OLLAMA_BASE_URL`, `OLLAMA_EMBEDDING_MODEL`, `OLLAMA_EMBEDDING_ENDPOINT`, `EMBEDDING_DIMENSIONS`, `OPENROUTER_BASE_URL`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `EXPERT_MATERIAL_WORKERS`. Qdrant settings are only used by the optional legacy PostgreSQL adapter/import tool. Relative SQLite paths resolve from `backend/`.
 
-Default limits: 20 MiB files, 200 PDF pages, 1000 chunks, 90-second service calls, three attempts. Expert reviews all extracted passages in checkpointed sections, merges repeated goals, and reports full passage coverage; there is no fixed document-wide concept quota. Missing generation credentials pause runs; configure and restart services, then resume. Readiness checks generation configuration, not paid inference.
+Default limits: 20 MiB files, 200 PDF pages, 1000 chunks, 90-second service calls, and five retries per run (six attempts including the initial run). Expert reviews all extracted passages in checkpointed sections, merges repeated goals, and reports full passage coverage; there is no fixed document-wide concept quota. Missing generation credentials pause runs; configure and restart services, then resume. Readiness checks generation configuration, not paid inference.
 
 ## Tests
 
@@ -132,7 +134,7 @@ The schema-export source is `frontend/src/lib/agent-activity/contracts.ts`; `scr
 
 The Next.js frontend is connected through its private same-origin backend proxy. Uploads, lessons, practice, evidence, and activity history use saved backend data. Frontend public event contracts/adapters live in `frontend/src/lib/agent-activity/`; they display execution performed by the Python agents and do not implement those agents. See the [frontend README](../frontend/README.md).
 
-Goal-aware planning and rubric assessment with optional written reasoning are implemented. LangGraph and general essay activities remain pending. The controlled evaluation harness is implemented; human review and research execution remain pending. The [implementation-status table](docs/agent-architecture.md#proposal-versus-current-implementation) separates current functionality from planned research work.
+Goal-aware planning and rubric assessment support single-answer, multiple-answer, fill-in, and open questions. The quiz and Tutor request the new formats on demand. LangGraph, Assessor-initiated question requests, and the controlled research run remain pending. The research harness still requires human sign-off. The [implementation-status table](docs/agent-architecture.md#proposal-versus-current-implementation) separates current functionality from planned research work.
 
 Not implemented: multi-user login, staff approval/repair, OCR/image extraction, cross-document concept merging, object storage, cancellation, semantic question deduplication, guaranteed full document coverage, usage/cost accounting and production deployment hardening. Review-required output cannot yet be approved through the API. This is a runnable local backend slice.
 
@@ -146,7 +148,7 @@ The Tutor now ranks prerequisite-safe educational actions using need, uncertaint
 
 New Expert questions include source-backed private reference answers and weighted rubrics. Assessment records criterion coverage, optional written reasoning, grounded misconception quotes, contradictions, prior assessment references and server elapsed response time. Partial/uncertain/assisted responses cannot establish demonstration. Existing activities remain usable through reviewed rubric upgrades.
 
-Apply `python -m alembic upgrade head` (current head: `0004`, including local vector storage) before restarting the updated API and worker. The goal/rubric migration adds three tables and preserves existing content/progress. See [planning and assessment validation](docs/planning-assessment-validation.md) for APIs, checks and remaining limits.
+Apply `python -m alembic upgrade head` (current head: `0005`) before restarting the updated API and worker. Revision `0005` adds typed responses to the existing response detail table and preserves saved answers. Set `EXPERT_VERIFIER_MODEL` if you want a different OpenRouter model for the second review of uncertain Expert output. The default uses a fresh call to the configured model.
 
 
 Assessment evidence and mastery targets follow the published curriculum layer: Basic uses Basic, Intermediate uses Intermediate, and Advanced uses Advanced. The map no longer has a separate evidence-difficulty selector. Assigned concepts have a fixed, matching target; unassigned legacy concepts retain their saved target (Intermediate fallback). Existing evidence remains at its original difficulty, including pending activities, and is never relabelled or deleted. Older catalog targets are resolved at read time, preserving source/resource signatures and learner versions. Practice may still adapt down for support, while mastery and prerequisite readiness require evidence at the curriculum layer.
@@ -157,6 +159,6 @@ The [evaluation harness](docs/evaluation-harness.md) implements the 27 prompt co
 
 ## Complete course releases
 
-Proposal gap 9 is implemented. Expert preparation publishes a version only after graph, curriculum, lessons and all three quiz levels validate. Sessions retain their release while later uploads prepare; failed preparation preserves the prior ready content. Release APIs return metadata and public lessons, keeping quiz keys private.
+Expert preparation publishes a version after the graph, curriculum, lessons and Basic starter questions pass validation. Sessions retain their release while later uploads prepare. If preparation fails, the prior release stays available. Release APIs return metadata and public lessons and keep quiz keys private.
 
 Apply migration `0003` and complete first-release validation for existing courses before switching services to this code. The migration preserves records and leaves legacy sessions unpinned until their next learning action. See [course release rollout and validation](docs/course-releases.md). This implementation task did not migrate or restart production services.

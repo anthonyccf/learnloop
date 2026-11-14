@@ -5,6 +5,7 @@ import { api, Course, CourseDetail, LearnerState, RunSummary, LearningMaterials 
 function useWorkspaceData() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [courseId, setCourseId] = useState("");
+  const [materialId, setMaterialId] = useState("");
   const [course, setCourse] = useState<CourseDetail | null>(null);
   const [learner, setLearner] = useState<LearnerState | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -15,18 +16,26 @@ function useWorkspaceData() {
   const loadedMaterials = useRef("");
   const refreshing = useRef(false);
   const refreshAgain = useRef(false);
-  const selectCourse = useCallback((id: string) => {
+  const selectCourse = useCallback((id: string, preserveMaterial = false) => {
     selected.current = id; setCourseId(id); setCourse(null); setLearner(null); setRuns([]);
+    if (!preserveMaterial) setMaterialId("");
     setMaterials({ materials: [], expectedCount: 0 });
     loadedMaterials.current = "";
-    try { localStorage.setItem("learnloop-course-id", id); } catch {}
+    try {
+      localStorage.setItem("learnloop-course-id", id);
+      if (!preserveMaterial) localStorage.removeItem("learnloop-material-id");
+    } catch {}
+  }, []);
+  const selectMaterial = useCallback((id: string) => {
+    setMaterialId(id);
+    try { localStorage.setItem("learnloop-material-id", id); } catch {}
   }, []);
   const loadCourses = useCallback(async () => {
     const items = await api<Course[]>("courses"); setCourses(items);
     let saved = selected.current;
     try { saved ||= localStorage.getItem("learnloop-course-id") || ""; } catch {}
     const id = items.some(c => c.id === saved) ? saved : items[0]?.id || "";
-    if (id !== selected.current) selectCourse(id);
+    if (id !== selected.current) selectCourse(id, true);
   }, [selectCourse]);
   const refresh = useCallback(async () => {
     if (refreshing.current) { refreshAgain.current = true; return; }
@@ -40,7 +49,14 @@ function useWorkspaceData() {
           const [detail, state, activity] = await Promise.all([api<CourseDetail>(`courses/${id}`), api<LearnerState>(`courses/${id}/learner-state`), api<RunSummary[]>(`courses/${id}/runs`)]);
           if (selected.current !== id) continue;
           setCourse(detail); setLearner(state); setRuns(activity);
-          const stamp = `${detail.documents.map(doc => [doc.id, doc.status, doc.lessonCount, doc.postLessonCount ?? "", doc.testCount].join(":")).join("|")}|${detail.graph.concepts.length}`;
+          setMaterialId(current => {
+            let preferred = current;
+            try { preferred ||= localStorage.getItem("learnloop-material-id") || ""; } catch {}
+            const next = preferred && detail.documents.some(document => document.id === preferred) ? preferred : "";
+            try { if (next !== preferred) localStorage.removeItem("learnloop-material-id"); } catch {}
+            return next;
+          });
+          const stamp = `${detail.documents.map(doc => [doc.id, doc.status, doc.lessonCount, doc.postLessonCount ?? "", doc.testCount, JSON.stringify(doc.sourceWarnings || [])].join(":")).join("|")}|${detail.graph.concepts.length}`;
           if (stamp !== loadedMaterials.current) {
             const learning = await api<LearningMaterials>(`courses/${id}/materials`);
             if (selected.current !== id) continue;
@@ -55,7 +71,7 @@ function useWorkspaceData() {
   }, []);
   useEffect(() => { void Promise.resolve().then(loadCourses).catch(e => setError(e.message)).finally(() => setLoading(false)); }, [loadCourses]);
   useEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 4000); return () => clearInterval(timer); }, [courseId, refresh]);
-  return { courses, courseId, course, learner, runs, materials, loading, error, selectCourse, loadCourses, refresh };
+  return { courses, courseId, materialId, course, learner, runs, materials, loading, error, selectCourse, selectMaterial, loadCourses, refresh };
 }
 const Context = createContext<ReturnType<typeof useWorkspaceData> | null>(null);
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {

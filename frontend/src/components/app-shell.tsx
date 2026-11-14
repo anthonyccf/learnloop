@@ -11,9 +11,11 @@ const navigation = [
   ["/materials", "Materials", "folder"],
   ["/progress", "Progress", "chart"],
   ["/agents", "Agent activity", "spark"],
+  ["/workbench/expert", "Agent workbench", "spark"],
 ];
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  if (pathname.startsWith("/workbench")) return <>{children}</>;
   const activePath = pathname.startsWith("/learn") ? "/learn" : pathname;
   return (
     <div className="app-shell">

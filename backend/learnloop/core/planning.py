@@ -11,7 +11,7 @@ from learnloop.core.domain import (
 from learnloop.core.schemas import LearningGoal
 
 
-def candidates(graph, evidence, goal=None, focus=None, previous=None, review_dates=None):
+def candidates(graph, evidence, goal=None, focus=None, previous=None, review_dates=None, memory=None):
     goal = goal or LearningGoal().model_dump()
     by_id = {c["id"]: c for c in graph.get("concepts", [])}
     requested = {focus} if focus else set(goal.get("conceptIds", []))
@@ -38,12 +38,11 @@ def candidates(graph, evidence, goal=None, focus=None, previous=None, review_dat
     result = []
     for concept in by_id.values():
         id = concept["id"]
-        # A direct quiz launch is the learner's choice to challenge this topic.
         if focus and id != focus:
             continue
         if requested and id not in allowed:
             continue
-        if id != focus and not select_concept(graph, evidence, id):
+        if not select_concept(graph, evidence, id):
             continue
         state = concept_state(concept, evidence)
         scheduled = (review_dates or {}).get(id)
@@ -54,6 +53,7 @@ def candidates(graph, evidence, goal=None, focus=None, previous=None, review_dat
         records = evidence.get(id, {})
         latest = max(records.values(), key=lambda r: r.get("lastAssessedAt", ""), default={})
         outcome = latest.get("lastOutcome", {})
+        gap = (memory or {}).get(id, {}).get("gap")
         weak = bool(
             outcome
             and (
@@ -64,7 +64,7 @@ def candidates(graph, evidence, goal=None, focus=None, previous=None, review_dat
             )
         )
         need = {"unassessed": 0.6, "developing": 1.0, "review_due": 0.8, "demonstrated": 0.1}[state]
-        uncertainty = 1.0 if outcome.get("uncertain") else 0.5 if state == "unassessed" else 0.0
+        uncertainty = 1.0 if outcome.get("uncertain") or gap else 0.5 if state == "unassessed" else 0.0
         urgency = 1.0 if state == "review_due" else 0.0
         if scheduled_due:
             urgency = 1.0
@@ -81,7 +81,7 @@ def candidates(graph, evidence, goal=None, focus=None, previous=None, review_dat
             action = "revisit_prerequisite"
         elif weak and level != target_difficulty(concept):
             action = "adjust_difficulty"
-        elif weak:
+        elif weak or gap:
             action = "remediate"
         elif advanced and id in related:
             action = "advance_related"

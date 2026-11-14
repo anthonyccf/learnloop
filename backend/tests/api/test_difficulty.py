@@ -4,6 +4,7 @@ import copy
 from sqlalchemy import select
 
 from learnloop.agents.expert.materials import material_content, material_valid
+from learnloop.agents.expert.questions import saved_question
 from learnloop.core.grounding import grounding_fingerprint
 from learnloop.core.schemas import Question
 from learnloop.persistence.database import Chunk, Document, LearnerState
@@ -86,6 +87,16 @@ def test_advanced_target_drives_assignment_and_separate_evidence(stack):
     assert work_once(factory, services)
     for index in range(2):
         current = client.get(f"/api/sessions/{session['id']}").json()
+        if index == 0:
+            with factory() as db:
+                cached, _, receipt = saved_question(
+                    db, course_id, current["releaseId"], concept_id, "advanced", []
+                )
+                assert cached.prompt == current["activity"]["prompt"]
+                assert receipt["status"] == "supported"
+                assert saved_question(
+                    db, course_id, current["releaseId"], concept_id, "advanced", [cached.prompt]
+                ) == (None, [], None)
         assert current["activity"]["difficulty"] == "advanced"
         client.post(
             f"/api/activities/{current['activity']['id']}/responses",
@@ -107,18 +118,17 @@ def test_advanced_target_drives_assignment_and_separate_evidence(stack):
             ).raise_for_status()
             assert work_once(factory, services)
     material = client.get(f"/api/courses/{course_id}/materials").json()["materials"][0]
-    assert material["questionCountsByDifficulty"] == {"basic": 2, "intermediate": 2, "advanced": 2}
+    assert material["questionCountsByDifficulty"] == {"basic": 2, "intermediate": 0, "advanced": 0}
     assert "correctChoiceId" not in str(material)
 
 
-def test_legacy_bank_upgrades_by_adding_levels_without_rewriting_existing_content(stack):
+def test_legacy_bank_adds_starter_questions_without_rewriting_existing_content(stack):
     client, factory, services, _ = stack
     course_id, uploaded = prepare_curriculum(stack)
     with factory.begin() as db:
         doc = db.get(Document, uploaded["documentId"])
         graph = copy.deepcopy(doc.graph)
         key, pack = next(iter(graph["resources"].items()))
-        pack["tests"] = [q for q in pack["tests"] if q["difficulty"] == "intermediate"]
         pack.pop("lessonsByDifficulty", None)
         for q in pack["tests"]:
             q.pop("difficulty")
@@ -144,7 +154,8 @@ def test_legacy_bank_upgrades_by_adding_levels_without_rewriting_existing_conten
     with factory() as db:
         updated = db.get(Document, uploaded["documentId"]).graph["resources"][key]
         assert updated["lesson"] == before["lesson"] and updated["tests"][:2] == before["tests"]
-        assert len(updated["tests"]) == 6 and material_valid(updated, chunks)
+        assert [q["difficulty"] for q in updated["tests"][2:]] == ["basic", "basic"]
+        assert material_valid(updated, chunks)
         assert not updated.get("lessonsByDifficulty")
     assert client.get(f"/api/courses/{course_id}/learner-state").json() == learner_before
 
@@ -191,6 +202,7 @@ def test_fallback_cannot_relabel_a_question_at_the_wrong_difficulty(stack, monke
     def generate(role, instruction, context, output):
         result = original(role, instruction, context, output)
         if output is Question:
+            assert role == "Expert"
             assert context["difficulty"] == "advanced"
             result.difficulty = "basic"
         return result

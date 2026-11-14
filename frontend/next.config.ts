@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.0.182", "127.0.0.1", "learnloop.agenneer.com"],
+  experimental: { mcpServer: false },
   cacheComponents: true,
   partialPrefetching: true,
 };

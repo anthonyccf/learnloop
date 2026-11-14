@@ -207,6 +207,7 @@ class ResponseDetail(Base):
     submission_id: Mapped[str] = mapped_column(ForeignKey("ll_submissions.id"), primary_key=True)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     timing: Mapped[dict] = mapped_column(JSON)
+    answer: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class RunEvent(Base):

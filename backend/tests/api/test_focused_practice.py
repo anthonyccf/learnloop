@@ -1,9 +1,14 @@
 from tests.release_fixtures import seed_legacy_release
 import copy
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
+from sqlalchemy import select
+
+from learnloop.core import domain
 from learnloop.core.schemas import PlanChoice
-from learnloop.persistence.database import Activity, Document
+from learnloop.persistence.database import Activity, Document, LearnerState
 from learnloop.runtime.worker import work_once
 
 
@@ -177,48 +182,142 @@ def test_completed_focused_topic_hands_next_topic_choice_to_tutor(stack, monkeyp
     assert finished["activity"] is None and finished["notice"]
 
 
-def test_direct_challenge_allows_unmet_prerequisites_and_rejects_unknown_lessons(stack):
+def test_direct_quiz_blocks_until_prerequisite_is_demonstrated(stack):
     from tests.api.test_integration import prepare
 
     client, factory, services, _ = stack
     course_id, upload = prepare(stack)
     original, target = add_lesson(factory, upload["documentId"])
     endpoint = f"/api/courses/{course_id}/sessions"
-    session = client.post(endpoint, json={"expectedLearnerVersion": 0}).json()
-    assert work_once(factory, services)
-    before = client.get(f"/api/sessions/{session['id']}").json()
     with factory.begin() as db:
         doc = db.get(Document, upload["documentId"])
         graph = copy.deepcopy(doc.graph)
         graph["prerequisites"].append({"prerequisite": original, "dependent": target})
         doc.graph = graph
         seed_legacy_release(db, doc.course_id)
+    target_request = {"expectedLearnerVersion": 0, "conceptId": target}
+    blocked = client.post(endpoint, json=target_request)
+    assert blocked.status_code == 409
+    detail = blocked.json()["detail"]
+    assert detail["code"] == "unmet_prerequisites"
+    assert detail["requested"]["conceptId"] == target
+    assert [p["conceptId"] for p in detail["prerequisites"]] == [original]
+    assert detail["nextStep"]["conceptId"] == original
+    assert not work_once(factory, services)
+    session = client.post(endpoint, json={"expectedLearnerVersion": 0, "conceptId": original}).json()
+    assert work_once(factory, services)
+    session_url = f"/api/sessions/{session['id']}"
+    before = client.get(session_url).json()
     assert (
         client.post(
             endpoint, json={"expectedLearnerVersion": 0, "conceptId": "other-course:unknown"}
         ).status_code
         == 404
     )
-    assert client.get(f"/api/sessions/{session['id']}").json()["activity"] == before["activity"]
-    selected = client.post(endpoint, json={"expectedLearnerVersion": 0, "conceptId": target})
-    assert selected.status_code == 202
-    assert work_once(factory, services)
-    focused = client.get(f"/api/sessions/{session['id']}").json()
-    assert focused["activity"]["conceptId"] == target
-    # Attempting a challenge does not manufacture prerequisite evidence.
-    assert client.get(f"/api/courses/{course_id}/learner-state").json()["version"] == 0
-    response = client.post(
-        f"/api/activities/{focused['activity']['id']}/responses",
-        json={"operationId": str(uuid4()), "expectedLearnerVersion": 0, "choiceId": "a"},
-    )
-    assert response.status_code == 202
-    assert work_once(factory, services)
-    version = client.get(f"/api/courses/{course_id}/learner-state").json()["version"]
-    assert (
+    assert client.post(endpoint, json=target_request).status_code == 409
+    assert client.get(session_url).json() == before
+    client.post(f"/api/activities/{before['activity']['id']}/hint", json={}).raise_for_status()
+    for version in range(3):
+        activity = client.get(session_url).json()["activity"]
+        assert activity["conceptId"] == original
         client.post(
-            f"/api/sessions/{session['id']}/next", json={"expectedLearnerVersion": version}
-        ).status_code
-        == 202
-    )
+            f"/api/activities/{activity['id']}/responses",
+            json={"operationId": str(uuid4()), "expectedLearnerVersion": version, "choiceId": "a"},
+        ).raise_for_status()
+        assert work_once(factory, services)
+        direct = client.post(endpoint, json={**target_request, "expectedLearnerVersion": version + 1})
+        if version < 2:
+            assert direct.status_code == 409
+            client.post(f"{session_url}/next", json={"expectedLearnerVersion": version + 1}).raise_for_status()
+            assert work_once(factory, services)
+        else:
+            assert direct.status_code == 202
     assert work_once(factory, services)
-    assert client.get(f"/api/sessions/{session['id']}").json()["activity"]["conceptId"] == target
+    assert client.get(session_url).json()["activity"]["conceptId"] == target
+
+
+def test_block_recommends_eligible_ancestor_and_checks_required_difficulty():
+    concepts = [
+        {"id": id, "title": title, "targetDifficulty": difficulty}
+        for id, title, difficulty in (
+            ("a", "Foundation", "intermediate"), ("b", "Application", "intermediate"),
+            ("c", "Synthesis", "advanced"),
+        )
+    ]
+    graph = {"concepts": concepts, "prerequisites": [
+        {"prerequisite": "a", "dependent": "b"}, {"prerequisite": "b", "dependent": "c"},
+    ]}
+    evidence = {"a": {"basic": {"state": "demonstrated"}}}
+    blocked = domain.prerequisite_block(graph, evidence, "c")
+    assert blocked["prerequisites"][0]["conceptId"] == "b"
+    assert blocked["nextStep"] == {
+        "conceptId": "a", "title": "Foundation", "difficulty": "intermediate", "state": "unassessed",
+    }
+    assert domain.prerequisite_block(graph, evidence, "b")
+
+
+@pytest.mark.parametrize("expire_during_generation", [True, False])
+def test_quiz_rechecks_expired_prerequisites_without_discarding_an_assigned_question(
+    stack, monkeypatch, expire_during_generation
+):
+    from tests.api.test_integration import prepare
+
+    class Clock(datetime):
+        current = datetime.now(UTC)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz) if tz else cls.current.replace(tzinfo=None)
+
+    monkeypatch.setattr(domain, "datetime", Clock)
+    client, factory, services, _ = stack
+    course_id, upload = prepare(stack)
+    original, target = add_lesson(factory, upload["documentId"])
+    with factory.begin() as db:
+        doc = db.get(Document, upload["documentId"])
+        graph = copy.deepcopy(doc.graph)
+        graph["prerequisites"].append({"prerequisite": original, "dependent": target})
+        doc.graph = graph
+        seed_legacy_release(db, doc.course_id)
+        state = db.scalar(select(LearnerState).where(LearnerState.course_id == course_id))
+        state.evidence = {original: {"basic": {
+            "state": "demonstrated", "reviewAt": (Clock.current + timedelta(hours=1)).isoformat(),
+        }}}
+
+    generate = services.generate
+
+    def expire_review(role, instruction, context, output):
+        if expire_during_generation and output is PlanChoice:
+            Clock.current += timedelta(hours=2)
+        return generate(role, instruction, context, output)
+
+    monkeypatch.setattr(services, "generate", expire_review)
+    launch = client.post(
+        f"/api/courses/{course_id}/sessions", json={"expectedLearnerVersion": 0, "conceptId": target}
+    )
+    assert launch.status_code == 202
+    assert work_once(factory, services)
+    session_url = f"/api/sessions/{launch.json()['id']}"
+    session = client.get(session_url).json()
+    if expire_during_generation:
+        assert session["activity"] is None
+        assert session["prerequisiteBlock"]["nextStep"]["state"] == "review_due"
+        assert session["prerequisiteBlock"]["nextStep"]["conceptId"] == original
+        return
+
+    Clock.current += timedelta(hours=2)
+    activity = session["activity"]
+    assert activity["conceptId"] == target
+    resumed = client.post(
+        f"/api/courses/{course_id}/sessions", json={"expectedLearnerVersion": 0, "conceptId": target}
+    )
+    assert resumed.status_code == 202 and resumed.json()["activity"] == activity
+    client.post(
+        f"/api/activities/{activity['id']}/responses",
+        json={"operationId": str(uuid4()), "expectedLearnerVersion": 0, "choiceId": "a"},
+    ).raise_for_status()
+    assert work_once(factory, services)
+    blocked = client.post(f"{session_url}/next", json={"expectedLearnerVersion": 1})
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["nextStep"]["state"] == "review_due"
+    assert client.get(session_url).json()["activity"]["status"] == "assessed"

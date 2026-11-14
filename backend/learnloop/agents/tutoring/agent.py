@@ -5,24 +5,26 @@ is used first; the model supplies a new grounded question when it is exhausted.
 """
 
 import copy
-import re
 
 from sqlalchemy import select
 
 from learnloop.agents.expert.materials import prepared_question
-from learnloop.agents.question_review import question_review_valid, review_question
+from learnloop.agents.expert.questions import generate_question, saved_question
+from learnloop.agents.grounding import review_grounding
 from learnloop.agents.references import refs
 from learnloop.agents.rubrics import ensure_rubric
-from learnloop.agents.tutoring.prompts import PLAN_PROMPT, QUESTION_PROMPT
-from learnloop.core.domain import select_concept, target_difficulty
+from learnloop.agents.tutoring.prompts import PLAN_PROMPT
+from learnloop.core.domain import prerequisite_block, select_concept, target_difficulty
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import (
+    grounding_valid,
     source_ids,
-    validate_sources,
 )
 from learnloop.core.planning import candidates
+from learnloop.core.question_formats import public_prompt
 from learnloop.core.schemas import PlanChoice, Question
 from learnloop.persistence.database import Activity, Course, Run, StudySession, now
+from learnloop.persistence.learner_memory import learner_memory
 from learnloop.persistence.plans import get_plan, record_revision
 from learnloop.persistence.releases import pin_session
 from learnloop.persistence.repository import course_graph, grounding_chunks, learner, retrieve
@@ -61,7 +63,10 @@ def run(factory, services, run_id):
         run.input = {**run.input, "release_id": release_id}
         state = learner(db, session.course_id, session.owner_id)
         target = run.input.get("target_concept_id")
+        mixed_formats = run.input.get("mixed_question_formats")
         graph = copy.deepcopy(course_graph(db, session.course_id, release_id))
+        if blocked := prerequisite_block(graph, state.evidence, target):
+            raise ServiceError(blocked["code"], blocked["message"], False, blocked)
         plan = get_plan(db, session.course_id, session.owner_id, create=True)
         plan_version, goal = plan.version, copy.deepcopy(plan.goal)
         plan_data = copy.deepcopy(plan.data)
@@ -73,6 +78,7 @@ def run(factory, services, run_id):
             )
         }
         review_dates.update(plan_data.get("reviewDates", {}))
+        memory = learner_memory(db, state, release_id, graph["concepts"])
         options = candidates(
             graph,
             state.evidence,
@@ -80,6 +86,7 @@ def run(factory, services, run_id):
             target,
             current.concept_id if current else run.input.get("previous_concept_id"),
             review_dates,
+            memory=memory,
         )
         if not options:
             run_status(
@@ -93,7 +100,16 @@ def run(factory, services, run_id):
         course_id, owner_id = session.course_id, session.owner_id
     offered = options[:12]
     choice = services.generate(
-        "Tutoring", PLAN_PROMPT, {"goal": goal, "candidates": offered}, PlanChoice
+        "Tutoring",
+        PLAN_PROMPT,
+        {
+            "goal": goal,
+            "candidates": offered,
+            "learnerMemory": {
+                c["conceptId"]: memory[c["conceptId"]] for c in offered
+            },
+        },
+        PlanChoice,
     )
     selected = next((c for c in offered if c["id"] == choice.candidateId), None)
     if not selected:
@@ -102,6 +118,8 @@ def run(factory, services, run_id):
         )
     concept = next(c for c in graph["concepts"] if c["id"] == selected["conceptId"])
     difficulty = selected["difficulty"]
+    gap = memory[concept["id"]]["gap"]
+    memory_target = None
     with factory.begin() as db:
         step(db, run_id, "tutoring", "Choose learning action", choice.rationale, "revise_plan")
         previous = list(
@@ -116,6 +134,17 @@ def run(factory, services, run_id):
             )
         )
         prompts = [a.public["prompt"] for a in previous]
+        question_format = "single_answer"
+        if mixed_formats and difficulty == "advanced":
+            question_format = "open"
+        elif mixed_formats and difficulty == "intermediate":
+            used = sum(a.public.get("format") in ("multiple_answer", "fill_in") for a in previous)
+            question_format = ("multiple_answer", "fill_in")[used % 2]
+        private_prompts = {a.public["prompt"] for a in previous if a.private.get("memoryTarget")}
+        if gap:
+            target_ref = {key: gap[key] for key in ("id", "activityId", "assessmentId") if key in gap}
+            if not any(a.private.get("memoryTarget") == target_ref for a in previous):
+                memory_target = target_ref
         step(
             db,
             run_id,
@@ -124,67 +153,60 @@ def run(factory, services, run_id):
             "Find published passages for an eligible concept.",
             "retrieve_evidence",
         )
+    reviewed_receipt = None
+    on_demand = False
     with factory() as db:
-        output, passages = prepared_question(
-            db, course_id, concept["id"], prompts, difficulty, release_id
-        )
-    question_origin = "expert" if output is not None else "tutoring"
-    if output is None:
-        with factory() as db:
-            passages = retrieve(
-                db,
-                services,
-                course_id,
-                owner_id,
-                concept["title"] + " " + concept["summary"],
-                release_id=release_id,
+        output, passages = None, []
+        if question_format == "single_answer":
+            output, passages = prepared_question(
+                db, course_id, concept["id"], prompts, difficulty, release_id
             )
-        if not passages:
-            raise ServiceError(
-                "no_grounding",
-                "No published source passages were retrieved for this activity.",
-                False,
+        if output is None:
+            on_demand = True
+            output, passages, reviewed_receipt = saved_question(
+                db, course_id, release_id, concept["id"], difficulty, prompts, question_format
             )
-        output = services.generate(
-            "Tutoring",
-            QUESTION_PROMPT,
-            {
-                "concept": concept,
-                "difficulty": difficulty,
-                "previousPrompts": prompts[-12:],
-                "passages": [{"chunkId": c["id"], "text": c["text"]} for c in passages],
-            },
-            Question,
+    if output is None or memory_target:
+        try:
+            with factory() as db:
+                retrieved = retrieve(
+                    db,
+                    services,
+                    course_id,
+                    owner_id,
+                    concept["title"] + " " + concept["summary"],
+                    release_id=release_id,
+                )
+            output, reviewed_receipt = generate_question(
+                services, concept, difficulty, prompts, retrieved,
+                diagnostic=gap["summary"] if memory_target else None,
+                private_prompts=private_prompts,
+                question_format=question_format,
+            )
+            passages = retrieved
+            on_demand = True
+        except ServiceError:
+            if output is None and question_format != "single_answer":
+                with factory() as db:
+                    output, passages = prepared_question(
+                        db, course_id, concept["id"], prompts, difficulty, release_id
+                    )
+                    if output is not None:
+                        on_demand = False
+                    else:
+                        output, passages, reviewed_receipt = saved_question(
+                            db, course_id, release_id, concept["id"], difficulty, prompts
+                        )
+            if output is None or (not memory_target and question_format == "single_answer"):
+                raise
+            # A verified general question can still be used if the private probe fails.
+            memory_target = None
+    if reviewed_receipt is None:
+        output = ensure_rubric(services, output, passages)
+        reviewed_receipt = review_grounding(
+            services, "Tutoring", output, {c["id"]: c for c in passages}
         )
-    output = ensure_rubric(services, output, passages)
-    if output.difficulty != difficulty:
-        raise ServiceError(
-            "invalid_difficulty", "The question does not match the selected difficulty.", False
-        )
-
-    def normalize(value):
-        return re.sub(r"\W+", "", value.casefold())
-
-    if normalize(output.prompt) in {normalize(prompt) for prompt in prompts}:
-        raise ServiceError(
-            "duplicate_question",
-            "The generated question duplicates an earlier activity. Retry to request a distinct question.",
-        )
-    chunk_map = {c["id"]: c for c in passages}
-    # Covers both legacy Expert questions and newly generated fallback questions.
-    validate_sources(output, chunk_map)
-    # The catalog concept was published by the Expert. This assignment reviews
-    # the actual question, not unrelated claims in its broader topic summary.
-    # Match the Assessing Agent's review scope and retain commit-time source checks.
     reviewed_item = output.model_dump()
-    reviewed_receipt = review_question(
-        services,
-        "Tutoring",
-        reviewed_item,
-        chunk_map,
-        concept=concept,
-    )
-    grounding = reviewed_receipt
     with factory.begin() as db:
         # Serialize every learning mutation per course before the learner/session rows.
         db.scalar(select(Course).where(Course.id == course_id).with_for_update())
@@ -199,10 +221,9 @@ def run(factory, services, run_id):
                 "Learner evidence changed while planning. Retry using the latest state.",
             )
         current_graph = course_graph(db, course_id, release_id)
-        if current_graph != graph or (
-            concept["id"] != target
-            and not select_concept(current_graph, state.evidence, concept["id"])
-        ):
+        if blocked := prerequisite_block(current_graph, state.evidence, concept["id"]):
+            raise ServiceError(blocked["code"], blocked["message"], False, blocked)
+        if current_graph != graph or not select_concept(current_graph, state.evidence, concept["id"]):
             raise ServiceError(
                 "plan_changed",
                 "Course relationships changed during planning. Retry using the current graph.",
@@ -224,7 +245,7 @@ def run(factory, services, run_id):
         current_chunks = grounding_chunks(
             db, course_id, owner_id, source_ids(reviewed_item), release_id
         )
-        if not question_review_valid(reviewed_item, current_chunks, reviewed_receipt):
+        if not grounding_valid(reviewed_item, current_chunks, reviewed_receipt):
             raise ServiceError(
                 "source_changed",
                 "Course evidence changed during source review. Review it before assignment.",
@@ -236,23 +257,22 @@ def run(factory, services, run_id):
             concept_id=concept["id"],
             difficulty=difficulty,
             public={
-                "prompt": output.prompt,
-                "choices": [c.model_dump() for c in output.choices],
+                **public_prompt(output),
                 "sources": references,
-                "authoredBy": question_origin,
+                "authoredBy": "expert",
                 "action": selected["action"],
                 "objective": selected["objective"],
                 "rationale": choice.rationale,
-                "extendedTopic": grounding["status"] == "extended",
-                "extensionReason": grounding.get("reason"),
             },
             private={
-                "correctChoiceId": output.correctChoiceId,
+                **({"correctChoiceId": output.correctChoiceId} if isinstance(output, Question) else {}),
                 "explanation": output.explanation,
                 "hint": output.hint,
                 "question": output.model_dump(),
                 "releaseId": release_id,
-                "grounding": grounding,
+                "grounding": reviewed_receipt,
+                "expertOnDemand": on_demand and memory_target is None,
+                "memoryTarget": memory_target,
                 "assignedAt": now().isoformat(),
             },
         )
@@ -285,9 +305,7 @@ def run(factory, services, run_id):
             run_id,
             "tutoring",
             "Activity ready",
-            "An Expert-approved extended topic is ready for the learner."
-            if grounding["status"] == "extended"
-            else "A source-grounded question is ready for the learner.",
+            "A source-grounded question is ready for the learner.",
             "assign_activity",
             "completed",
             references=references,
@@ -295,7 +313,7 @@ def run(factory, services, run_id):
                 {
                     "id": activity.id,
                     "kind": "activity",
-                    "label": "Multiple-choice question",
+                    "label": "Practice question",
                     "status": "committed",
                 }
             ],

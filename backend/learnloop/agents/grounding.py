@@ -17,7 +17,9 @@ faithful paraphrases; they do not require separate glossary sentences. This
 does not permit undocumented technical behavior, symbol mappings, guarantees,
 or additional facts. For tests verify the correct option, explanation
 and hint against the passages; incorrect distractors are intentionally false.
-Also verify reference answers, each rubric criterion and its choice-score mapping.
+Check all marked options, accepted blank variants, and open-question criteria as applicable.
+If independentAnswer is supplied, check that the reference and rubric credit its valid reasoning.
+Also verify reference answers, each rubric criterion and any choice-score mapping.
 Hypothetical examples are allowed if clearly labelled and their reasoning and
 calculations follow the source-supported method. Reject unsupported facts,
 incorrect keys, contradictory claims and invalid calculations. Use uncertain
@@ -27,27 +29,36 @@ without quoting answer keys or private test content. Do not decide learner state
 """
 
 
-def review_grounding(services, role, item, chunks, receipt=None):
+def second_verifier(services, instruction, context, output):
+    verifier = getattr(services, "verify", None)
+    if verifier:
+        return verifier(instruction, context, output)
+    return services.generate("Expert", instruction, context, output)
+
+
+def review_grounding(services, role, item, chunks, receipt=None, *, independent_answer=None):
     if isinstance(item, BaseModel):
         item = item.model_dump()
     ids = validate_sources(item, chunks)
     if grounding_valid(item, chunks, receipt):
         return receipt
-    output = services.generate(
-        role,
-        GROUNDING_PROMPT,
-        {
-            "item": item,
-            "passages": [{"chunkId": id, "text": chunks[id]["text"]} for id in sorted(ids)],
-        },
-        GroundingReview,
-    )
+    context = {
+        "item": item,
+        "passages": [{"chunkId": id, "text": chunks[id]["text"]} for id in sorted(ids)],
+    }
+    if independent_answer:
+        context["independentAnswer"] = independent_answer
+    output = services.generate(role, GROUNDING_PROMPT, context, GroundingReview)
     if output.status != "supported":
+        details = {"review": output.model_dump()}
+        if role == "Expert" and output.status == "uncertain":
+            second = second_verifier(services, GROUNDING_PROMPT, context, GroundingReview)
+            details["secondReview"] = second.model_dump()
         raise ServiceError(
             "unsupported_content" if output.status == "unsupported" else "insufficient_evidence",
             "Course evidence did not establish support for this item. Review its sources before use.",
             False,
-            details={"review": output.model_dump()},
+            details=details,
         )
     return {"fingerprint": grounding_fingerprint(item, chunks), "status": "supported"}
 

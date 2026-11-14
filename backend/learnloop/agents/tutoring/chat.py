@@ -8,8 +8,9 @@ from sqlalchemy import select
 from learnloop.agents.expert.materials import public_materials
 from learnloop.core.schemas import TutorChatReply
 from learnloop.persistence.database import Activity, Course, StudySession
+from learnloop.persistence.learner_memory import learner_memory, record_tutor_observation
 from learnloop.persistence.releases import pin_session, released_chunks, released_documents
-from learnloop.persistence.repository import course_graph, public_activity
+from learnloop.persistence.repository import course_graph, learner, public_activity
 
 CHAT_PROMPT = """Have a helpful tutoring conversation about the current course concept.
 Answer the learner's latest message directly, using the public lesson and source
@@ -20,6 +21,11 @@ When assessment_pending is true, coach with questions or a nudge; do not name or
 confirm the correct option, grade an answer, or invent an assessment result.
 Only the assessment workflow grades answers and updates the understanding graph.
 Do not claim to have saved or changed evidence. Do not invent source references.
+Use learnerMemory to adapt the explanation, without quoting private notes or
+giving away a pending answer. Include one observation only when the latest
+learner message explicitly shows a specific strength or difficulty. Give a short
+neutral skill description and an exact quote from that message. A question alone
+does not establish a knowledge gap. Return null for unsupported observations.
 """
 
 
@@ -83,6 +89,7 @@ def answer_chat(factory, services, session_id, owner_id, body):
                 409, "This lesson needs source review before tutoring. Prepare its materials again."
             )
         course_id, activity_id, initial_status = session.course_id, activity.id, activity.status
+        memory = learner_memory(db, learner(db, course_id, owner_id), session.release_id, [concept])
         context = {
             "concept": concept,
             "lesson": lesson,
@@ -90,6 +97,7 @@ def answer_chat(factory, services, session_id, owner_id, body):
             "assessment_pending": initial_status == "pending",
             "history": [turn.model_dump() for turn in body.history],
             "message": body.message,
+            "learnerMemory": memory[concept["id"]],
         }
 
     # No database transaction stays open during the model request.
@@ -108,6 +116,7 @@ def answer_chat(factory, services, session_id, owner_id, body):
             )
         if activity.status == "pending":
             activity.hinted = True
+        record_tutor_observation(activity, body.message, reply.observation)
         return {
             "reply": reply.text,
             "sources": sources,

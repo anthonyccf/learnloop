@@ -1,5 +1,6 @@
 import copy
 import io
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, uuid5
 
@@ -261,6 +262,52 @@ def assess_evidence(
         "at": at.isoformat(),
     }
     return before, result
+
+
+def prerequisite_block(graph, evidence, target_id):
+    """Describe an unmet prerequisite and a reachable step in the same chain."""
+    if target_id is None:
+        return None
+    by_id = {c["id"]: c for c in graph.get("concepts", [])}
+    if target_id not in by_id or select_concept(graph, evidence, target_id):
+        return None
+    parents = {}
+    for edge in graph.get("prerequisites", []):
+        parents.setdefault(edge["dependent"], []).append(edge["prerequisite"])
+
+    def describe(id):
+        concept = by_id[id]
+        return {
+            "conceptId": id,
+            "title": concept["title"],
+            "difficulty": target_difficulty(concept),
+            "state": concept_state(concept, evidence),
+        }
+
+    def unmet(id):
+        return [
+            p for p in parents.get(id, [])
+            if p in by_id and concept_state(by_id[p], evidence) != "demonstrated"
+        ]
+
+    direct = unmet(target_id)
+    queue, visited, next_step = deque(direct), {target_id}, None
+    while queue:
+        id = queue.popleft()
+        if id in visited:
+            continue
+        visited.add(id)
+        if select_concept(graph, evidence, id):
+            next_step = describe(id)
+            break
+        queue.extend(unmet(id))
+    return {
+        "code": "unmet_prerequisites",
+        "message": "Practice or review the required topics before starting this quiz.",
+        "requested": {"conceptId": target_id, "title": by_id[target_id]["title"]},
+        "prerequisites": [describe(id) for id in direct],
+        "nextStep": next_step,
+    }
 
 
 def select_concept(graph: dict, evidence: dict, target_id: str | None = None):

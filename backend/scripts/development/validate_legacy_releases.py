@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from learnloop.agents.expert.curriculum import validate_curriculum
-from learnloop.agents.expert.materials import difficulty_complete, material_valid
+from learnloop.agents.expert.materials import material_valid, starter_complete
 from learnloop.agents.expert.organization import current_organization
 from learnloop.core.config import ROOT, get_settings
 from learnloop.core.schemas import LessonScopeReview
@@ -74,7 +74,7 @@ def repair_course(factory, services, course_id):
             for concept in doc.graph.get("concepts", []):
                 id = concept["id"]
                 pack = doc.graph["resources"][id]
-                if not material_valid(pack, chunks) or not difficulty_complete(pack):
+                if not material_valid(pack, chunks) or not starter_complete(pack):
                     raise ValueError(
                         "Existing resources must pass source and difficulty checks first"
                     )

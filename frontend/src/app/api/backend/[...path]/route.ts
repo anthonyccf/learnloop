@@ -6,11 +6,11 @@ const routes = [
   /^courses(?:\/[^/]+(?:\/(?:documents|rename|materials|organize|learner-state|sessions|search|runs|assessments))?)?$/,
   /^courses\/[^/]+\/plan(?:\/revise)?$/,
   /^courses\/[^/]+\/concepts\/[^/]+\/target$/,
-  /^documents\/[^/]+\/(?:rename|review|materials|analyze|pages\/\d+(?:\/slide)?)$/,
+  /^documents\/[^/]+\/(?:rename|review|materials|analyze|inspection|pages\/\d+(?:\/slide)?)$/,
   /^sessions\/[^/]+(?:\/(?:end|next|chat))?$/,
   /^activities\/[^/]+\/(?:hint|responses|present)$/,
   /^submissions\/[^/]+$/,
-  /^agent-activity\/runs\/[^/]+(?:\/(?:commands|events))?$/,
+  /^agent-activity\/runs\/[^/]+(?:\/(?:commands|events|evaluation))?$/,
 ];
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {

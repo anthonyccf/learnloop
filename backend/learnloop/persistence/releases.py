@@ -82,8 +82,8 @@ def publish_course(db, course_id, run_id=None):
     from learnloop.agents.expert.curriculum import validate_curriculum
     from learnloop.agents.expert.materials import (
         MATERIALS_VERSION,
-        difficulty_complete,
         material_valid,
+        starter_complete,
     )
     from learnloop.agents.expert.organization import current_organization, validate_organization
     from learnloop.core.domain import validate_graph
@@ -139,7 +139,9 @@ def publish_course(db, course_id, run_id=None):
     assignments = []
     for doc in documents:
         draft = doc.graph
-        if not draft.get("analysis", {}).get("complete") or draft.get("sourceIssues"):
+        current_ids = {concept["id"] for concept in draft.get("concepts", [])}
+        active_issues = current_ids.intersection(draft.get("sourceIssues", {}))
+        if not draft.get("analysis", {}).get("complete") or active_issues:
             raise ServiceError(
                 "course_not_ready", "Source analysis or resource review is incomplete.", False
             )
@@ -176,12 +178,12 @@ def publish_course(db, course_id, run_id=None):
             pack = draft.get("resources", {}).get(concept["id"], {})
             if (
                 pack.get("version") != MATERIALS_VERSION
-                or not difficulty_complete(pack)
+                or not starter_complete(pack)
                 or not material_valid(pack, chunks)
             ):
                 raise ServiceError(
                     "course_not_ready",
-                    f"Lessons and all three quiz levels must pass source review: {concept['id']}",
+                    f"The lesson and Basic starter questions must pass source review: {concept['id']}",
                     False,
                 )
             Lesson.model_validate(pack["lesson"])

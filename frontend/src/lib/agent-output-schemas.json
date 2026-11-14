@@ -1,0 +1,1660 @@
+{
+  "expert.analysis": {
+    "SectionGraph": {
+      "$defs": {
+        "Concept": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,62}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 150,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "summary": {
+              "maxLength": 1000,
+              "minLength": 10,
+              "title": "Summary",
+              "type": "string"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            },
+            "targetDifficulty": {
+              "default": "intermediate",
+              "enum": [
+                "basic",
+                "intermediate",
+                "advanced"
+              ],
+              "title": "Targetdifficulty",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "summary",
+            "sources",
+            "targetDifficulty"
+          ],
+          "title": "Concept",
+          "type": "object"
+        },
+        "Edge": {
+          "additionalProperties": false,
+          "properties": {
+            "prerequisite": {
+              "title": "Prerequisite",
+              "type": "string"
+            },
+            "dependent": {
+              "title": "Dependent",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/Source"
+            }
+          },
+          "required": [
+            "prerequisite",
+            "dependent",
+            "source"
+          ],
+          "title": "Edge",
+          "type": "object"
+        },
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "concepts": {
+          "items": {
+            "$ref": "#/$defs/Concept"
+          },
+          "title": "Concepts",
+          "type": "array"
+        },
+        "prerequisites": {
+          "items": {
+            "$ref": "#/$defs/Edge"
+          },
+          "title": "Prerequisites",
+          "type": "array"
+        }
+      },
+      "title": "SectionGraph",
+      "type": "object",
+      "required": [
+        "concepts",
+        "prerequisites"
+      ]
+    }
+  },
+  "expert.lesson": {
+    "PyramidMaterials": {
+      "$defs": {
+        "Choice": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "enum": [
+                "a",
+                "b",
+                "c",
+                "d"
+              ],
+              "title": "Id",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 600,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "title": "Choice",
+          "type": "object"
+        },
+        "ChoiceScores": {
+          "additionalProperties": false,
+          "properties": {
+            "a": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "A",
+              "type": "number"
+            },
+            "b": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "B",
+              "type": "number"
+            },
+            "c": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "C",
+              "type": "number"
+            },
+            "d": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "D",
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "title": "ChoiceScores",
+          "type": "object"
+        },
+        "Equation": {
+          "additionalProperties": false,
+          "properties": {
+            "latex": {
+              "maxLength": 400,
+              "minLength": 1,
+              "title": "Latex",
+              "type": "string"
+            },
+            "explanation": {
+              "maxLength": 1200,
+              "minLength": 10,
+              "title": "Explanation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "latex",
+            "explanation"
+          ],
+          "title": "Equation",
+          "type": "object"
+        },
+        "ExampleStep": {
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "explanation": {
+              "maxLength": 260,
+              "minLength": 5,
+              "title": "Explanation",
+              "type": "string"
+            },
+            "equations": {
+              "items": {
+                "maxLength": 400,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 3,
+              "title": "Equations",
+              "type": "array"
+            }
+          },
+          "required": [
+            "title",
+            "explanation",
+            "equations"
+          ],
+          "title": "ExampleStep",
+          "type": "object"
+        },
+        "Flashcard": {
+          "additionalProperties": false,
+          "properties": {
+            "front": {
+              "maxLength": 400,
+              "minLength": 5,
+              "title": "Front",
+              "type": "string"
+            },
+            "back": {
+              "maxLength": 1000,
+              "minLength": 10,
+              "title": "Back",
+              "type": "string"
+            }
+          },
+          "required": [
+            "front",
+            "back"
+          ],
+          "title": "Flashcard",
+          "type": "object"
+        },
+        "PostExample": {
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/ExampleStep"
+              },
+              "maxItems": 8,
+              "minItems": 2,
+              "title": "Steps",
+              "type": "array"
+            },
+            "explanation": {
+              "maxLength": 320,
+              "minLength": 10,
+              "title": "Explanation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "steps",
+            "explanation"
+          ],
+          "title": "PostExample",
+          "type": "object"
+        },
+        "PostLesson": {
+          "additionalProperties": false,
+          "description": "Short teaching blocks, converted to safe Markdown for existing lesson readers.",
+          "properties": {
+            "title": {
+              "maxLength": 110,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "objective": {
+              "maxLength": 180,
+              "minLength": 10,
+              "title": "Objective",
+              "type": "string"
+            },
+            "hook": {
+              "maxLength": 180,
+              "minLength": 10,
+              "title": "Hook",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "maxLength": 220,
+                "minLength": 10,
+                "type": "string"
+              },
+              "maxItems": 6,
+              "minItems": 3,
+              "title": "Points",
+              "type": "array"
+            },
+            "equations": {
+              "items": {
+                "$ref": "#/$defs/Equation"
+              },
+              "maxItems": 2,
+              "title": "Equations",
+              "type": "array"
+            },
+            "workedExample": {
+              "$ref": "#/$defs/PostExample"
+            },
+            "takeaway": {
+              "maxLength": 220,
+              "minLength": 10,
+              "title": "Takeaway",
+              "type": "string"
+            },
+            "commonMistake": {
+              "maxLength": 280,
+              "minLength": 10,
+              "title": "Commonmistake",
+              "type": "string"
+            },
+            "flashcards": {
+              "items": {
+                "$ref": "#/$defs/Flashcard"
+              },
+              "maxItems": 2,
+              "minItems": 1,
+              "title": "Flashcards",
+              "type": "array"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            }
+          },
+          "required": [
+            "title",
+            "objective",
+            "hook",
+            "points",
+            "equations",
+            "workedExample",
+            "takeaway",
+            "commonMistake",
+            "flashcards",
+            "sources"
+          ],
+          "title": "PostLesson",
+          "type": "object"
+        },
+        "Question": {
+          "additionalProperties": false,
+          "properties": {
+            "difficulty": {
+              "default": "intermediate",
+              "enum": [
+                "basic",
+                "intermediate",
+                "advanced"
+              ],
+              "title": "Difficulty",
+              "type": "string"
+            },
+            "prompt": {
+              "maxLength": 1500,
+              "minLength": 10,
+              "title": "Prompt",
+              "type": "string"
+            },
+            "explanation": {
+              "maxLength": 1500,
+              "minLength": 10,
+              "title": "Explanation",
+              "type": "string"
+            },
+            "hint": {
+              "maxLength": 600,
+              "minLength": 5,
+              "title": "Hint",
+              "type": "string"
+            },
+            "choices": {
+              "items": {
+                "$ref": "#/$defs/Choice"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "title": "Choices",
+              "type": "array"
+            },
+            "correctChoiceId": {
+              "enum": [
+                "a",
+                "b",
+                "c",
+                "d"
+              ],
+              "title": "Correctchoiceid",
+              "type": "string"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            },
+            "referenceAnswer": {
+              "anyOf": [
+                {
+                  "maxLength": 1500,
+                  "minLength": 10,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Referenceanswer"
+            },
+            "rubric": {
+              "items": {
+                "$ref": "#/$defs/RubricCriterion"
+              },
+              "maxItems": 5,
+              "title": "Rubric",
+              "type": "array"
+            }
+          },
+          "required": [
+            "difficulty",
+            "prompt",
+            "explanation",
+            "hint",
+            "choices",
+            "correctChoiceId",
+            "sources",
+            "referenceAnswer",
+            "rubric"
+          ],
+          "title": "Question",
+          "type": "object"
+        },
+        "RubricCriterion": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,40}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "weight": {
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Weight",
+              "type": "integer"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            },
+            "choiceScores": {
+              "$ref": "#/$defs/ChoiceScores"
+            }
+          },
+          "required": [
+            "id",
+            "description",
+            "weight",
+            "sources",
+            "choiceScores"
+          ],
+          "title": "RubricCriterion",
+          "type": "object"
+        },
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "lesson": {
+          "$ref": "#/$defs/PostLesson"
+        },
+        "tests": {
+          "items": {
+            "$ref": "#/$defs/Question"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Tests",
+          "type": "array"
+        }
+      },
+      "required": [
+        "lesson",
+        "tests"
+      ],
+      "title": "PyramidMaterials",
+      "type": "object"
+    }
+  },
+  "expert.questions": {
+    "single_answer": {
+      "$defs": {
+        "Choice": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "enum": [
+                "a",
+                "b",
+                "c",
+                "d"
+              ],
+              "title": "Id",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 600,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "title": "Choice",
+          "type": "object"
+        },
+        "ChoiceScores": {
+          "additionalProperties": false,
+          "properties": {
+            "a": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "A",
+              "type": "number"
+            },
+            "b": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "B",
+              "type": "number"
+            },
+            "c": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "C",
+              "type": "number"
+            },
+            "d": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "D",
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "title": "ChoiceScores",
+          "type": "object"
+        },
+        "RubricCriterion": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,40}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "weight": {
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Weight",
+              "type": "integer"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            },
+            "choiceScores": {
+              "$ref": "#/$defs/ChoiceScores"
+            }
+          },
+          "required": [
+            "id",
+            "description",
+            "weight",
+            "sources",
+            "choiceScores"
+          ],
+          "title": "RubricCriterion",
+          "type": "object"
+        },
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "difficulty": {
+          "default": "intermediate",
+          "enum": [
+            "basic",
+            "intermediate",
+            "advanced"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "prompt": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "explanation": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "hint": {
+          "maxLength": 600,
+          "minLength": 5,
+          "title": "Hint",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Choices",
+          "type": "array"
+        },
+        "correctChoiceId": {
+          "enum": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "title": "Correctchoiceid",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "referenceAnswer": {
+          "anyOf": [
+            {
+              "maxLength": 1500,
+              "minLength": 10,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Referenceanswer"
+        },
+        "rubric": {
+          "items": {
+            "$ref": "#/$defs/RubricCriterion"
+          },
+          "maxItems": 5,
+          "title": "Rubric",
+          "type": "array"
+        }
+      },
+      "required": [
+        "difficulty",
+        "prompt",
+        "explanation",
+        "hint",
+        "choices",
+        "correctChoiceId",
+        "sources",
+        "referenceAnswer",
+        "rubric"
+      ],
+      "title": "Question",
+      "type": "object"
+    },
+    "multiple_answer": {
+      "$defs": {
+        "Choice": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "enum": [
+                "a",
+                "b",
+                "c",
+                "d"
+              ],
+              "title": "Id",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 600,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "title": "Choice",
+          "type": "object"
+        },
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
+          "type": "object"
+        },
+        "WrittenCriterion": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,40}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "weight": {
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Weight",
+              "type": "integer"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "description",
+            "weight",
+            "sources"
+          ],
+          "title": "WrittenCriterion",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "const": "multiple_answer",
+          "default": "multiple_answer",
+          "title": "Format",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "basic",
+            "intermediate",
+            "advanced"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "prompt": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "explanation": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "hint": {
+          "maxLength": 600,
+          "minLength": 5,
+          "title": "Hint",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "referenceAnswer": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Referenceanswer",
+          "type": "string"
+        },
+        "rubric": {
+          "items": {
+            "$ref": "#/$defs/WrittenCriterion"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Rubric",
+          "type": "array"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Choices",
+          "type": "array"
+        },
+        "correctChoiceIds": {
+          "items": {
+            "enum": [
+              "a",
+              "b",
+              "c",
+              "d"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 2,
+          "title": "Correctchoiceids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "format",
+        "difficulty",
+        "prompt",
+        "explanation",
+        "hint",
+        "sources",
+        "referenceAnswer",
+        "rubric",
+        "choices",
+        "correctChoiceIds"
+      ],
+      "title": "MultipleAnswerQuestion",
+      "type": "object"
+    },
+    "fill_in": {
+      "$defs": {
+        "BlankKey": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,40}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "acceptedAnswers": {
+              "items": {
+                "maxLength": 400,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 6,
+              "minItems": 1,
+              "title": "Acceptedanswers",
+              "type": "array"
+            },
+            "caseSensitive": {
+              "default": false,
+              "title": "Casesensitive",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "acceptedAnswers",
+            "caseSensitive"
+          ],
+          "title": "BlankKey",
+          "type": "object"
+        },
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
+          "type": "object"
+        },
+        "WrittenCriterion": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,40}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "weight": {
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Weight",
+              "type": "integer"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "description",
+            "weight",
+            "sources"
+          ],
+          "title": "WrittenCriterion",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "const": "fill_in",
+          "default": "fill_in",
+          "title": "Format",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "basic",
+            "intermediate",
+            "advanced"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "prompt": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "explanation": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "hint": {
+          "maxLength": 600,
+          "minLength": 5,
+          "title": "Hint",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "referenceAnswer": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Referenceanswer",
+          "type": "string"
+        },
+        "rubric": {
+          "items": {
+            "$ref": "#/$defs/WrittenCriterion"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Rubric",
+          "type": "array"
+        },
+        "blanks": {
+          "items": {
+            "$ref": "#/$defs/BlankKey"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Blanks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "format",
+        "difficulty",
+        "prompt",
+        "explanation",
+        "hint",
+        "sources",
+        "referenceAnswer",
+        "rubric",
+        "blanks"
+      ],
+      "title": "FillInQuestion",
+      "type": "object"
+    },
+    "open": {
+      "$defs": {
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
+          "type": "object"
+        },
+        "WrittenCriterion": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[a-z][a-z0-9-]{0,40}$",
+              "title": "Id",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "weight": {
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Weight",
+              "type": "integer"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Sources",
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "description",
+            "weight",
+            "sources"
+          ],
+          "title": "WrittenCriterion",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "const": "open",
+          "default": "open",
+          "title": "Format",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "basic",
+            "intermediate",
+            "advanced"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "prompt": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "explanation": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "hint": {
+          "maxLength": 600,
+          "minLength": 5,
+          "title": "Hint",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "referenceAnswer": {
+          "maxLength": 1500,
+          "minLength": 10,
+          "title": "Referenceanswer",
+          "type": "string"
+        },
+        "rubric": {
+          "items": {
+            "$ref": "#/$defs/WrittenCriterion"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Rubric",
+          "type": "array"
+        }
+      },
+      "required": [
+        "format",
+        "difficulty",
+        "prompt",
+        "explanation",
+        "hint",
+        "sources",
+        "referenceAnswer",
+        "rubric"
+      ],
+      "title": "OpenQuestion",
+      "type": "object"
+    }
+  },
+  "tutor.analysis": {
+    "PlanChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Candidateid",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 600,
+          "minLength": 10,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidateId",
+        "rationale"
+      ],
+      "title": "PlanChoice",
+      "type": "object"
+    }
+  },
+  "tutor.lesson": {
+    "TutorChatReply": {
+      "$defs": {
+        "TutorObservation": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "strength",
+                "gap"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "summary": {
+              "maxLength": 240,
+              "minLength": 10,
+              "title": "Summary",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 240,
+              "minLength": 5,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "summary",
+            "quote"
+          ],
+          "title": "TutorObservation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 6000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TutorObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "text",
+        "observation"
+      ],
+      "title": "TutorChatReply",
+      "type": "object"
+    }
+  },
+  "tutor.questions": {},
+  "assessing.analysis": {
+    "Assessment": {
+      "$defs": {
+        "CriterionCoverage": {
+          "additionalProperties": false,
+          "properties": {
+            "criterionId": {
+              "maxLength": 41,
+              "minLength": 1,
+              "title": "Criterionid",
+              "type": "string"
+            },
+            "score": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Score",
+              "type": "number"
+            },
+            "reason": {
+              "maxLength": 500,
+              "minLength": 5,
+              "title": "Reason",
+              "type": "string"
+            },
+            "responseQuote": {
+              "default": "",
+              "maxLength": 600,
+              "title": "Responsequote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "criterionId",
+            "score",
+            "reason",
+            "responseQuote"
+          ],
+          "title": "CriterionCoverage",
+          "type": "object"
+        },
+        "Misconception": {
+          "additionalProperties": false,
+          "properties": {
+            "criterionId": {
+              "maxLength": 41,
+              "minLength": 1,
+              "title": "Criterionid",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "responseQuote": {
+              "maxLength": 600,
+              "minLength": 1,
+              "title": "Responsequote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "criterionId",
+            "description",
+            "responseQuote"
+          ],
+          "title": "Misconception",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "feedback": {
+          "maxLength": 1500,
+          "minLength": 5,
+          "title": "Feedback",
+          "type": "string"
+        },
+        "uncertain": {
+          "title": "Uncertain",
+          "type": "boolean"
+        },
+        "coverage": {
+          "items": {
+            "$ref": "#/$defs/CriterionCoverage"
+          },
+          "maxItems": 5,
+          "title": "Coverage",
+          "type": "array"
+        },
+        "misconceptions": {
+          "items": {
+            "$ref": "#/$defs/Misconception"
+          },
+          "maxItems": 5,
+          "title": "Misconceptions",
+          "type": "array"
+        },
+        "contradiction": {
+          "default": false,
+          "title": "Contradiction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "feedback",
+        "uncertain",
+        "coverage",
+        "misconceptions",
+        "contradiction"
+      ],
+      "title": "Assessment",
+      "type": "object"
+    },
+    "BlankEquivalence": {
+      "additionalProperties": false,
+      "properties": {
+        "possibleEquivalence": {
+          "title": "Possibleequivalence",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "possibleEquivalence"
+      ],
+      "title": "BlankEquivalence",
+      "type": "object"
+    }
+  },
+  "assessing.lesson": {
+    "Assessment": {
+      "$defs": {
+        "CriterionCoverage": {
+          "additionalProperties": false,
+          "properties": {
+            "criterionId": {
+              "maxLength": 41,
+              "minLength": 1,
+              "title": "Criterionid",
+              "type": "string"
+            },
+            "score": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Score",
+              "type": "number"
+            },
+            "reason": {
+              "maxLength": 500,
+              "minLength": 5,
+              "title": "Reason",
+              "type": "string"
+            },
+            "responseQuote": {
+              "default": "",
+              "maxLength": 600,
+              "title": "Responsequote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "criterionId",
+            "score",
+            "reason",
+            "responseQuote"
+          ],
+          "title": "CriterionCoverage",
+          "type": "object"
+        },
+        "Misconception": {
+          "additionalProperties": false,
+          "properties": {
+            "criterionId": {
+              "maxLength": 41,
+              "minLength": 1,
+              "title": "Criterionid",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 500,
+              "minLength": 10,
+              "title": "Description",
+              "type": "string"
+            },
+            "responseQuote": {
+              "maxLength": 600,
+              "minLength": 1,
+              "title": "Responsequote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "criterionId",
+            "description",
+            "responseQuote"
+          ],
+          "title": "Misconception",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "feedback": {
+          "maxLength": 1500,
+          "minLength": 5,
+          "title": "Feedback",
+          "type": "string"
+        },
+        "uncertain": {
+          "title": "Uncertain",
+          "type": "boolean"
+        },
+        "coverage": {
+          "items": {
+            "$ref": "#/$defs/CriterionCoverage"
+          },
+          "maxItems": 5,
+          "title": "Coverage",
+          "type": "array"
+        },
+        "misconceptions": {
+          "items": {
+            "$ref": "#/$defs/Misconception"
+          },
+          "maxItems": 5,
+          "title": "Misconceptions",
+          "type": "array"
+        },
+        "contradiction": {
+          "default": false,
+          "title": "Contradiction",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "feedback",
+        "uncertain",
+        "coverage",
+        "misconceptions",
+        "contradiction"
+      ],
+      "title": "Assessment",
+      "type": "object"
+    }
+  },
+  "assessing.questions": {}
+}

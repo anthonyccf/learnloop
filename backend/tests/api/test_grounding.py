@@ -4,7 +4,7 @@ import copy
 import pytest
 from sqlalchemy import func, select
 
-from learnloop.core.schemas import Assessment, ExtendedTopicReview, GroundingReview, PostMaterials
+from learnloop.core.schemas import Assessment, ExtendedTopicReview, GroundingReview, PostMaterials, QuestionKeyCheck
 from learnloop.persistence.database import Activity, Chunk, Document, Submission
 from learnloop.runtime.worker import work_once
 from tests.api.test_integration import prepare
@@ -20,41 +20,38 @@ def start(stack, course_id):
     return client.get(f"/api/sessions/{session['id']}").json()
 
 
-def test_expert_extension_is_labelled_and_can_be_answered(stack, monkeypatch):
+def test_uncertain_question_cannot_be_admitted_as_an_extension(stack, monkeypatch):
     client, factory, services, _ = stack
     course_id, _ = prepare(stack)
     generate = services.generate
 
-    def approve_extension(role, instruction, context, output):
+    def reject_extension_call(role, instruction, context, output):
         if output is ExtendedTopicReview:
-            assert role == "Expert"
-            return ExtendedTopicReview(
-                approved=True,
-                reason="Additional optimization context helps connect the lecture's core ideas.",
-            )
+            pytest.fail("New assignments must not use the extension approval path.")
         return generate(role, instruction, context, output)
 
-    monkeypatch.setattr(services, "generate", approve_extension)
+    monkeypatch.setattr(services, "generate", reject_extension_call)
     services.grounding_status = "uncertain"
-    session = start(stack, course_id)
-    activity = session["activity"]
-    assert activity["extendedTopic"] is True
-    assert "Additional optimization" in activity["extensionReason"]
-    assert "correctChoiceId" not in activity
-    with factory() as db:
-        saved = db.get(Activity, activity["id"])
-        assert saved.private["grounding"]["status"] == "extended"
-        choice = saved.private["correctChoiceId"]
-    response = client.post(
-        f"/api/activities/{activity['id']}/responses",
-        json={"operationId": "extended-answer", "expectedLearnerVersion": 0, "choiceId": choice},
-    )
-    assert response.status_code == 202
-    assert work_once(factory, services)
-    assessed = client.get(f"/api/sessions/{session['id']}").json()
-    assert assessed["activity"]["extendedTopic"] is True
-    assert assessed["activity"]["status"] == "assessed"
-    assert assessed["assessment"]["correct"] is True
+    assert start(stack, course_id)["activity"] is None
+
+
+def test_starter_keys_are_checked_without_the_answer_and_repaired(stack, monkeypatch):
+    client, factory, services, _ = stack
+    generate = services.generate
+    checks = []
+
+    def disagree_once(role, instruction, context, output):
+        if output is QuestionKeyCheck:
+            assert all(set(q) == {"prompt", "choices", "passages"} for q in context["questions"])
+            checks.append(context["questions"])
+            if len(checks) == 1:
+                return QuestionKeyCheck(answers=["uncertain", "a"])
+        return generate(role, instruction, context, output)
+
+    monkeypatch.setattr(services, "generate", disagree_once)
+    course_id, _ = prepare(stack)
+    assert len(checks) == 3 and checks[0] == checks[1] and checks[1] != checks[2]
+    assert client.get(f"/api/courses/{course_id}/materials").json()["materials"][0]["questionCount"] == 2
 
 
 @pytest.mark.parametrize("status", ["unsupported", "uncertain"])
@@ -92,13 +89,15 @@ def test_invalid_materials_are_flagged_before_saving_or_serving(stack, monkeypat
     ).json()
     assert work_once(factory, services)
     assert (
-        client.get(f"/api/agent-activity/runs/{upload['runId']}").json()["status"] == "needs_review"
+        client.get(f"/api/agent-activity/runs/{upload['runId']}").json()["status"] == "completed"
     )
     with factory() as db:
         graph = db.get(Document, upload["documentId"]).graph
         assert not graph.get("resources")
         assert graph["sourceIssues"]
     assert client.get(f"/api/courses/{course_id}/materials").json()["materials"] == []
+    document = client.get(f"/api/courses/{course_id}").json()["documents"][0]
+    assert document["sourceWarnings"]
     review = client.get(f"/api/documents/{upload['documentId']}/review").json()
     assert "correctChoiceId" not in str(review)
 

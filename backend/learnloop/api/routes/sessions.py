@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from learnloop.agents.tutoring.chat import answer_chat
 from learnloop.api.dependencies import ApiContext
-from learnloop.core.domain import concept_state
+from learnloop.core.domain import concept_state, prerequisite_block
 from learnloop.core.schemas import ContinueSession, StartSession, TutorChatRequest
 from learnloop.persistence.database import (
     Activity,
@@ -38,12 +38,7 @@ def build_router(context: ApiContext):
             state = learner(db, course_id, principal, lock=True)
             if state.version != body.expectedLearnerVersion:
                 raise HTTPException(409, "Learner state changed. Refresh before starting.")
-            graph = course_graph(db, course_id)
             target = body.conceptId
-            if target:
-                concept = next((c for c in graph["concepts"] if c["id"] == target), None)
-                if not concept:
-                    raise HTTPException(404, "This lesson is not published in the selected course.")
             existing = db.scalar(
                 select(StudySession).where(
                     StudySession.course_id == course_id,
@@ -53,9 +48,12 @@ def build_router(context: ApiContext):
             )
             if existing:
                 pin_session(db, existing)
-                graph = course_graph(db, course_id, existing.release_id)
-                if target and target not in {c["id"] for c in graph["concepts"]}:
+            graph = course_graph(db, course_id, existing.release_id if existing else None)
+            if target and target not in {c["id"] for c in graph["concepts"]}:
+                if existing and any(c["id"] == target for c in course_graph(db, course_id)["concepts"]):
                     raise HTTPException(409, "End this session to study a newly published lesson.")
+                raise HTTPException(404, "This lesson is not published in the selected course.")
+            if existing:
                 if target is None:
                     return session_view(db, existing)
                 current = (
@@ -68,6 +66,10 @@ def build_router(context: ApiContext):
                     raise HTTPException(
                         409, "Wait for your submitted answer to be checked before changing topics."
                     )
+                if blocked := prerequisite_block(graph, state.evidence, target):
+                    if current and current.status == "pending" and current.concept_id == target:
+                        return session_view(db, existing)
+                    raise HTTPException(409, blocked)
                 active = [
                     r for r in runs if r.snapshot["status"] in ("queued", "running", "paused")
                 ]
@@ -92,6 +94,7 @@ def build_router(context: ApiContext):
                             continue
                         updated = dict(run.input)
                         updated["target_concept_id"] = target
+                        updated["mixed_question_formats"] = body.mixedQuestionFormats
                         run.input = updated
                         snapshot = copy.deepcopy(run.snapshot)
                         snapshot["conceptId"] = target
@@ -117,12 +120,15 @@ def build_router(context: ApiContext):
                     db,
                     course,
                     "next_activity",
-                    {"session_id": existing.id, "target_concept_id": target},
+                    {"session_id": existing.id, "target_concept_id": target,
+                     "mixed_question_formats": body.mixedQuestionFormats},
                     target,
                 )
                 return session_view(db, existing)
             if not graph["concepts"]:
                 raise HTTPException(409, "Publish course resources before starting a session.")
+            if blocked := prerequisite_block(graph, state.evidence, target):
+                raise HTTPException(409, blocked)
             session = StudySession(
                 course_id=course_id, owner_id=principal, release_id=get_release(db, course_id).id
             )
@@ -132,7 +138,8 @@ def build_router(context: ApiContext):
                 db,
                 course,
                 "next_activity",
-                {"session_id": session.id, "target_concept_id": target},
+                {"session_id": session.id, "target_concept_id": target,
+                 "mixed_question_formats": body.mixedQuestionFormats},
                 target,
             )
             return {
@@ -183,14 +190,14 @@ def build_router(context: ApiContext):
                 return session_view(db, session)
             if current and current.status == "submitted":
                 raise HTTPException(409, "Wait for the submitted response to be assessed.")
+            runs = runs_for_session(db, session.id)
             if any(
                 r.snapshot["status"] in ("queued", "running", "paused")
-                for r in runs_for_session(db, session.id)
+                for r in runs
             ):
                 raise HTTPException(409, "A session run is already pending.")
-            # Only this explicit learner action advances away from assessed work.
-            session.current_activity_id = None
-            target = session_target(runs_for_session(db, session.id))
+            latest = context.latest_activity_run(runs)
+            target = latest.input.get("target_concept_id") if latest else None
             pin_session(db, session)
             graph = course_graph(db, course.id, session.release_id)
             concept = next((c for c in graph["concepts"] if c["id"] == target), None)
@@ -198,6 +205,10 @@ def build_router(context: ApiContext):
                 # Focus lasts until the requested topic is complete. The tutor
                 # then chooses the next eligible topic across the learning plan.
                 target = None
+            if blocked := prerequisite_block(graph, state.evidence, target):
+                raise HTTPException(409, blocked)
+            # Only this explicit learner action advances away from assessed work.
+            session.current_activity_id = None
             run = new_run(
                 db,
                 course,
@@ -205,6 +216,9 @@ def build_router(context: ApiContext):
                 {
                     "session_id": session.id,
                     "target_concept_id": target,
+                    "mixed_question_formats": body.mixedQuestionFormats or bool(
+                        latest and latest.input.get("mixed_question_formats")
+                    ),
                     "previous_concept_id": current.concept_id if current else None,
                 },
                 target,

@@ -109,9 +109,13 @@ def analyze_document(factory, services, run_id, document_id, chunks):
     chunk_map = {c["id"]: c for c in chunks}
     aliases = {c["id"]: f"s{i}" for i, c in enumerate(chunks)}
     original_ids = {alias: id for id, alias in aliases.items()}
-    signature = hashlib.sha256("|".join(c["id"] for c in chunks).encode()).hexdigest()
     with factory.begin() as db:
         doc = db.get(Document, document_id)
+        prompt_fingerprint = db.get(Run, run_id).input.get("prompt_template_fingerprint")
+        signature_input = "|".join(c["id"] for c in chunks)
+        if prompt_fingerprint:
+            signature_input += f"|{prompt_fingerprint}"
+        signature = hashlib.sha256(signature_input.encode()).hexdigest()
         graph = copy.deepcopy(doc.graph)
         review_feedback = (
             db.get(Run, run_id).input.get("sectionReviewFeedback", {}).get(document_id)
@@ -220,6 +224,10 @@ def analyze_document(factory, services, run_id, document_id, chunks):
     if failures:
         raise failures[0]
     if complete:
+        with factory.begin() as db:
+            doc = db.get(Document, document_id)
+            if doc.status != "published":
+                doc.status = "prepared"
         return
     with factory() as db:
         doc = db.get(Document, document_id)

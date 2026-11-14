@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -42,8 +43,12 @@ def build_router(context: ApiContext):
                     "summary": r.snapshot["summary"],
                     "startedAt": r.input.get("_started_at")
                     or next((e["at"] for e in r.snapshot.get("events", [])), None),
-                    "documentId": r.input.get("document_id"),
+                    "documentId": (r.input.get("_inspection_document_ids") or [r.input.get("document_id")])[0],
                     "sessionId": r.input.get("session_id"),
+                    "templateName": (r.input.get("prompt_template") or {}).get("name"),
+                    "model": (r.input.get("prompt_template") or {}).get("model"),
+                    "temperature": (r.input.get("prompt_template") or {}).get("temperature"),
+                    "modelsUsed": r.input.get("_models_used", []),
                 }
                 for r in db.scalars(
                     select(Run).where(Run.course_id == course_id, Run.owner_id == principal)
@@ -54,6 +59,43 @@ def build_router(context: ApiContext):
     def get_run(run_id: str, principal=Depends(owner)):
         with factory() as db:
             return owned(db, Run, run_id, principal).snapshot
+
+    @router.get("/api/agent-activity/runs/{run_id}/evaluation")
+    def evaluate_run(run_id: str, principal=Depends(owner)):
+        with factory() as db:
+            run = owned(db, Run, run_id, principal)
+            if run.snapshot.get("workflow") != "course_preparation":
+                raise HTTPException(404, "Expert run not found.")
+            job = db.scalar(select(Job).where(Job.run_id == run.id))
+            views = run.input.get("_inspection_snapshots") or {}
+            document_ids = run.input.get("_inspection_document_ids") or []
+            view = views.get(document_ids[0]) if document_ids else None
+            started = run.input.get("_started_at")
+            terminal_events = [event for event in run.snapshot.get("events", [])
+                               if event.get("type") == "run.status" and event.get("payload", {}).get("status") in ("completed", "failed", "needs_review", "paused")]
+            elapsed = None
+            if started and terminal_events and run.snapshot.get("status") in ("completed", "failed", "needs_review", "paused"):
+                try:
+                    elapsed = max(0, (datetime.fromisoformat(terminal_events[-1]["at"]) - datetime.fromisoformat(started)).total_seconds())
+                except (ValueError, TypeError, KeyError):
+                    pass
+            result = {"runId": run.id, "snapshotAvailable": view is not None, "elapsedSeconds": elapsed,
+                      "retriesUsed": max(0, job.attempts - 1) if job else None,
+                      "concepts": None, "conceptsWithSourceLinks": None, "processedPassages": None,
+                      "totalPassages": None, "reviewPassRate": None, "cost": None}
+            if view is not None:
+                graph = view.get("graph") or {}
+                concepts = graph.get("concepts") or []
+                chunk_ids = {chunk.get("id") for chunk in view.get("chunks", [])}
+                result["concepts"] = len(concepts)
+                result["conceptsWithSourceLinks"] = sum(
+                    bool((set(concept.get("sourceChunkIds") or []) | {source.get("chunkId") for source in concept.get("sources", [])}) & chunk_ids)
+                    for concept in concepts
+                )
+                coverage = graph.get("coverage") or {}
+                result["processedPassages"] = coverage.get("processedPassages")
+                result["totalPassages"] = coverage.get("totalPassages")
+            return result
 
     @router.post("/api/agent-activity/runs/{run_id}/commands")
     def command(run_id: str, body: RunCommand, principal=Depends(owner)):

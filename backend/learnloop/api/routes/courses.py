@@ -3,6 +3,7 @@
 import copy
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from learnloop.agents.expert.materials import MATERIALS_VERSION, material_valid, public_materials
@@ -16,6 +17,7 @@ from learnloop.persistence.database import (
     LearnerState,
     Run,
 )
+from learnloop.persistence.learner_memory import learner_memory
 from learnloop.persistence.releases import (
     get_release,
     publish_course,
@@ -133,6 +135,7 @@ def build_router(context: ApiContext):
                         "status": d.status,
                         "pages": d.pages,
                         "coverage": d.graph.get("coverage"),
+                        "sourceWarnings": [{"conceptId": key, **issue} for key, issue in d.graph.get("sourceIssues", {}).items()],
                         "lessonCount": len(reviewed[d.id]),
                         "postLessonCount": sum(
                             r.get("version") == MATERIALS_VERSION for r in reviewed[d.id]
@@ -230,6 +233,23 @@ def build_router(context: ApiContext):
         with factory() as db:
             owned(db, Course, course_id, principal)
             return public_state(learner(db, course_id, principal), course_graph(db, course_id))
+
+    @router.get("/api/courses/{course_id}/learner-memory")
+    def export_memory(course_id: str, principal=Depends(owner)):
+        with factory() as db:
+            owned(db, Course, course_id, principal)
+            release = get_release(db, course_id)
+            release_id = release.id if release else None
+            state = learner(db, course_id, principal)
+            graph = course_graph(db, course_id, release_id)
+            return JSONResponse(
+                {"courseId": course_id, "releaseId": release_id,
+                 "objectives": learner_memory(db, state, release_id, graph["concepts"])},
+                headers={
+                    "Content-Disposition": 'attachment; filename="learner-memory.json"',
+                    "Cache-Control": "no-store",
+                },
+            )
 
     @router.post("/api/courses/{course_id}/concepts/{concept_id}/target")
     def update_target(

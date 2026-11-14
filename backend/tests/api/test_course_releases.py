@@ -42,7 +42,7 @@ def test_discovered_graph_is_staged_until_all_resources_validate(stack):
 
 @pytest.mark.parametrize(
     "fault",
-    ["missing_pack", "stale_source", "scope", "quiz_level", "curriculum", "pending_document"],
+    ["missing_pack", "stale_source", "scope", "starter_count", "curriculum", "pending_document"],
 )
 def test_incomplete_rebuild_keeps_previous_release(stack, fault):
     client, factory, _, _ = stack
@@ -61,8 +61,8 @@ def test_incomplete_rebuild_keeps_previous_release(stack, fault):
             ).text = "Different draft evidence."
         elif fault == "scope":
             graph["resources"][concept]["scopeFingerprint"] = "stale"
-        elif fault == "quiz_level":
-            graph["resources"][concept]["tests"] = graph["resources"][concept]["tests"][:2]
+        elif fault == "starter_count":
+            graph["resources"][concept]["tests"] = graph["resources"][concept]["tests"][:1]
         elif fault == "curriculum":
             graph["curriculum"]["signature"] = "stale"
         else:
@@ -94,6 +94,51 @@ def test_release_retry_is_atomic_and_concurrent_publish_is_idempotent(stack):
     assert len(client.get(f"/api/courses/{course}/releases").json()["releases"]) == 1
 
 
+def test_retired_source_issues_do_not_block_current_catalog(stack):
+    from learnloop.agents.expert.materials import prepare_materials
+
+    client, factory, services, _ = stack
+    course, upload = prepare(stack)
+    with factory.begin() as db:
+        doc = db.get(Document, upload["documentId"])
+        graph = copy.deepcopy(doc.graph)
+        current_id = graph["concepts"][0]["id"]
+        graph["sourceIssues"] = {"retired-concept": {"code": "repeated_teaching", "message": "Old review."}}
+        doc.graph = graph
+    # Existing drafts with retired flags can still publish; current flags block.
+    assert client.post(f"/api/courses/{course}/releases").status_code == 201
+    with factory.begin() as db:
+        doc = db.get(Document, upload["documentId"])
+        graph = copy.deepcopy(doc.graph)
+        graph["sourceIssues"][current_id] = {"code": "unsupported_content", "message": "Current review."}
+        doc.graph = graph
+    assert client.post(f"/api/courses/{course}/releases").status_code == 409
+    with factory.begin() as db:
+        doc = db.get(Document, upload["documentId"])
+        graph = copy.deepcopy(doc.graph)
+        graph["sourceIssues"].pop(current_id)
+        doc.graph = graph
+    prepare_materials(factory, services, upload["runId"], upload["documentId"], finalize=False)
+    with factory() as db:
+        graph = db.get(Document, upload["documentId"]).graph
+        assert graph["sourceIssues"] == {}
+        assert graph["retiredSourceIssues"]["retired-concept"]["message"] == "Old review."
+
+
+def test_completed_section_review_restores_prepared_status_on_resume(stack):
+    from learnloop.agents.expert.agent import prepare_graph
+    from learnloop.persistence.database import Run
+
+    _, factory, services, _ = stack
+    _, upload = prepare(stack)
+    with factory.begin() as db:
+        doc = db.get(Document, upload["documentId"])
+        doc.status = "needs_review"
+        run = db.get(Run, upload["runId"])
+        run.input = {**run.input, "review_all_sections": True}
+    prepare_graph(factory, services, upload["runId"])
+    with factory() as db:
+        assert db.get(Document, upload["documentId"]).status == "prepared"
 def test_sessions_and_assessment_stay_pinned_while_new_release_is_published(stack):
     client, factory, services, _ = stack
     course, upload = prepare(stack)
