@@ -3,12 +3,13 @@
 import { useRef, useState } from "react";
 import { api, type SavedMixedAnswer, type StudySession } from "@/lib/backend";
 
-export function MixedAnswer({ activity, courseId, saved, disabled, onSubmit }: {
+export function MixedAnswer({ activity, courseId, saved, disabled, onSubmit, workbench }: {
   activity: NonNullable<StudySession["activity"]>;
   courseId: string;
   saved?: SavedMixedAnswer;
   disabled: boolean;
   onSubmit: (submit: () => Promise<void>) => void;
+  workbench?: { memoryId: string; version: number; onResult: (result: unknown) => void };
 }) {
   const [choices, setChoices] = useState<string[]>([]);
   const [blanks, setBlanks] = useState(() => new Map<string, string>());
@@ -25,13 +26,14 @@ export function MixedAnswer({ activity, courseId, saved, disabled, onSubmit }: {
       : { answerText: answerText.trim() };
     const key = JSON.stringify(answer);
     if (operation.current?.key !== key) {
-      const { version } = await api<{ version: number }>(`courses/${courseId}/learner-state`);
+      const { version } = workbench || await api<{ version: number }>(`courses/${courseId}/learner-state`);
       operation.current = { key, id: crypto.randomUUID(), version };
     }
     const op = operation.current;
-    await api(`activities/${activity.id}/responses`, {
+    const result = await api(workbench ? `workbench/memories/${workbench.memoryId}/answer` : `activities/${activity.id}/responses`, {
       operationId: op.id, expectedLearnerVersion: op.version, ...answer,
     });
+    if (workbench) workbench.onResult(result);
   }
 
   return <fieldset disabled={disabled}>

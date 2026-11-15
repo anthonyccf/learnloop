@@ -140,6 +140,7 @@ def assess_evidence(
     hinted: bool,
     uncertain: bool,
     at: datetime,
+    baseline: bool = False,
 ):
     result = copy.deepcopy(
         record
@@ -223,7 +224,8 @@ def assess_evidence(
         if activity_id not in history:
             history.append(activity_id)
         result["independentActivityIds"] = qualifying
-        result["state"] = "demonstrated" if len(qualifying) >= 2 else "developing"
+        threshold = 1 if baseline and not result["hasDemonstrated"] and not active_weakness else 2
+        result["state"] = "demonstrated" if len(qualifying) >= threshold else "developing"
         if result["state"] == "demonstrated":
             result["hasDemonstrated"] = True
             result["reviewAt"] = (at + timedelta(days=7)).isoformat()

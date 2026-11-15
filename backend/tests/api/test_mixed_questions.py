@@ -7,18 +7,22 @@ from learnloop.core.schemas import (
     MultipleAnswerQuestion,
     OpenQuestion,
 )
+from learnloop.persistence.database import Activity
 from learnloop.runtime.worker import work_once
 from tests.api.test_difficulty import prepare
 
 
 @pytest.mark.parametrize(
-    "target,formats",
+    "target,formats,selection,expected_score",
     [
-        ("intermediate", ["multiple_answer", "fill_in"]),
-        ("advanced", ["open"]),
+        ("basic", ["single_answer", "fill_in"], None, 1),
+        ("intermediate", ["multiple_answer", "fill_in"], None, 1),
+        ("advanced", ["open"], None, 1),
+        ("intermediate", ["multiple_answer"], ["a", "c"], 0.5),
+        ("intermediate", ["multiple_answer"], ["a", "b", "c"], 1),
     ],
 )
-def test_expert_generates_verifies_and_assigns_mixed_questions(stack, monkeypatch, target, formats):
+def test_expert_generates_verifies_and_assigns_mixed_questions(stack, monkeypatch, target, formats, selection, expected_score):
     client, factory, services, _ = stack
     course_id, _ = prepare(stack)
     concept = client.get(f"/api/courses/{course_id}").json()["graph"]["concepts"][0]
@@ -55,6 +59,7 @@ def test_expert_generates_verifies_and_assigns_mixed_questions(stack, monkeypatc
                 ],
             }
             if output is MultipleAnswerQuestion:
+                common["rubric"][0]["choiceIds"] = ["a", "b"]
                 return output(
                     **common,
                     prompt="Which two statements describe gradient descent?",
@@ -126,15 +131,19 @@ def test_expert_generates_verifies_and_assigns_mixed_questions(stack, monkeypatc
         version = initial_version + index
         assert work_once(factory, services)
         item = client.get(session_url).json()["activity"]
-        assert item["format"] == expected and item["difficulty"] == target
+        assert item.get("format", "single_answer") == expected and item["difficulty"] == target
         assert not (
             {"referenceAnswer", "rubric", "correctChoiceIds", "acceptedAnswers"} & item.keys()
         )
         path = f"/api/activities/{item['id']}/responses"
         operation = {"operationId": f"mixed-{version}", "expectedLearnerVersion": version}
-        assert client.post(path, json={**operation, "choiceId": "a"}).status_code == 422
+        if expected != "single_answer":
+            assert client.post(path, json={**operation, "choiceId": "a"}).status_code == 422
+        with factory() as db:
+            correct_choice = db.get(Activity, item["id"]).private.get("correctChoiceId")
         answer = {
-            "multiple_answer": {"choiceIds": ["b", "a"]},
+            "single_answer": {"choiceId": correct_choice},
+            "multiple_answer": {"choiceIds": selection or ["b", "a"]},
             "fill_in": {"blanks": [{"id": "direction", "text": "SUBTRACT  THE gradient"}]},
             "open": {"answerText": "Subtract the gradient to move toward lower loss."},
         }[expected]
@@ -143,10 +152,15 @@ def test_expert_generates_verifies_and_assigns_mixed_questions(stack, monkeypatc
         assert client.post(path, json={**operation, **answer}).json() == receipt.json()
         assert work_once(factory, services)
         assessed = client.get(session_url).json()
-        assert assessed["assessment"]["rubricScore"] == 1 and assessed["assessment"]["correct"]
-        assert assessed["answer"] and assessed["selectedChoiceId"] is None
+        assessment = assessed["assessment"]
+        assert assessment["rubricScore"] == expected_score
+        assert assessment["correct"] is (selection is None)
+        if selection is not None:
+            assert assessment["partial"] and "Incorrectly selected" in assessment["feedback"]
+        if expected != "single_answer":
+            assert assessed["answer"] and assessed["selectedChoiceId"] is None
         if index + 1 < len(formats):
             client.post(
                 f"{session_url}/next", json={"expectedLearnerVersion": version + 1}
             ).raise_for_status()
-    assert verified_formats == formats
+    assert verified_formats == [fmt for fmt in formats if fmt != "single_answer"]

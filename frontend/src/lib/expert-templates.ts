@@ -16,7 +16,7 @@ export const promptStagesByAgent: Record<WorkbenchAgent, { id: ExpertPromptStage
   tutor: [
     { id: "analysis", label: "Learning plan", description: "Choose a learning action from the course and learner context." },
     { id: "lesson", label: "Tutor response", description: "Explain the selected concept to the learner." },
-    { id: "questions", label: "Question selection", description: "Choose an eligible question for practice or review." },
+    { id: "questions", label: "Question selection", description: "Explore instructions for selecting practice questions." },
   ],
   assessing: [
     { id: "analysis", label: "Answer analysis", description: "Compare the learner response against the assessment rubric." },
@@ -32,7 +32,7 @@ export type AgentPromptTemplate = {
   prompts: Record<ExpertPromptStage, string>;
   enabledTools: string[];
   model: string;
-  temperature: number;
+  temperature: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -41,11 +41,15 @@ export type OpenRouterModel = {
   id: string;
   name: string;
   contextLength: number;
+  supportsTemperature: boolean | null;
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;
 };
 
 export const EXPERT_TEMPLATE_STORAGE_KEY = "learnloop-agent-prompt-templates-v1";
+export function formatTemplateTemperature(temperature: number | null | undefined) {
+  return typeof temperature === "number" ? temperature.toFixed(1) : "Provider default";
+}
 const LEGACY_EXPERT_TEMPLATE_STORAGE_KEY = "learnloop-expert-prompt-templates-v1";
 
 export const systemToolCatalog: { id: string; name: string; description: string; agents: WorkbenchAgent[] }[] = [

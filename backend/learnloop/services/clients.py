@@ -23,6 +23,10 @@ class Services:
     def last_resolved_model(self):
         return getattr(self._model_call_state, "resolved_model", None)
 
+    @property
+    def last_generation_usage(self):
+        return getattr(self._model_call_state, "usage", None)
+
     def embed(self, text: str) -> list[float]:
         with httpx.Client(timeout=self.settings.request_timeout_seconds, trust_env=False) as client:
             response = client.post(
@@ -163,6 +167,7 @@ class Services:
         temperature: float | None = None,
     ):
         self._model_call_state.resolved_model = None
+        self._model_call_state.usage = None
         if not self.settings.generation_ready:
             raise ServiceError(
                 "model_not_configured",
@@ -241,6 +246,14 @@ class Services:
                 )
             data = response.json()
         resolved_model = data.get("model") if isinstance(data, dict) else None
+        usage = data.get("usage") if isinstance(data, dict) else None
+        usage = usage if isinstance(usage, dict) else {}
+        input_tokens, output_tokens, cost = usage.get("prompt_tokens"), usage.get("completion_tokens"), usage.get("cost")
+        self._model_call_state.usage = {
+            "inputTokens": input_tokens if type(input_tokens) is int and input_tokens >= 0 else None,
+            "outputTokens": output_tokens if type(output_tokens) is int and output_tokens >= 0 else None,
+            "costUsd": cost if type(cost) in (int, float) and math.isfinite(cost) and cost >= 0 else None,
+        }
         if isinstance(resolved_model, str) and resolved_model.strip():
             self._model_call_state.resolved_model = resolved_model
         try:

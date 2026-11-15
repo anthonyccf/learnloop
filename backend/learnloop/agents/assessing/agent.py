@@ -17,7 +17,7 @@ from learnloop.core.domain import WEAKNESS_FAILURE_THRESHOLD, assess_evidence, e
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import source_ids
 from learnloop.core.question_formats import parse_question
-from learnloop.core.schemas import Assessment, Question
+from learnloop.core.schemas import Assessment, MultipleAnswerQuestion, Question
 from learnloop.persistence.database import (
     Activity,
     Chunk,
@@ -100,12 +100,13 @@ def run(factory, services, run_id):
             session.course_id,
             session.owner_id,
         )
+        content_owner_id = db.get(Course, course_id).owner_id
         if not already_assessed:
             saved_question = activity.private.get("question")
             if saved_question:
                 sources = saved_question["sources"]
                 passages = grounding_chunks(
-                    db, course_id, owner_id, source_ids(saved_question), release_id
+                    db, course_id, content_owner_id, source_ids(saved_question), release_id
                 )
             else:
                 # Legacy activities retain only public page anchors. Resolve every
@@ -130,7 +131,7 @@ def run(factory, services, run_id):
                             )
                         )
                     )
-                    resolved = grounding_chunks(db, course_id, owner_id, ids, release_id)
+                    resolved = grounding_chunks(db, course_id, content_owner_id, ids, release_id)
                     if not resolved:
                         raise ServiceError(
                             "invalid_source",
@@ -174,9 +175,10 @@ def run(factory, services, run_id):
             if not typed_answer:
                 raise ServiceError("missing_answer", "The saved response is missing its typed answer.", False)
             output, coverage, score = assess_mixed(services, rubric_question, context, typed_answer)
-            correct = score >= 1.0
-        rubric_met = score >= 1.0
-        partial = 0 < score < 1.0
+            correct = (set(typed_answer["choiceIds"]) == set(rubric_question.correctChoiceIds)
+                       if isinstance(rubric_question, MultipleAnswerQuestion) else score >= 1.0)
+        rubric_met = score >= 1.0 and (correct if isinstance(rubric_question, MultipleAnswerQuestion) else True)
+        partial = 0 < score < 1.0 or (isinstance(rubric_question, MultipleAnswerQuestion) and score > 0 and not correct)
         contradiction = bool(
             output.contradiction
             or (
@@ -197,7 +199,7 @@ def run(factory, services, run_id):
                         "Learner evidence changed during assessment. Retry to assess against current evidence.",
                     )
                 current_chunks = grounding_chunks(
-                    db, course_id, owner_id, source_ids(question), release_id
+                    db, course_id, content_owner_id, source_ids(question), release_id
                 )
                 if not question_review_valid(question, current_chunks, reviewed_receipt):
                     raise ServiceError(
@@ -214,6 +216,7 @@ def run(factory, services, run_id):
                     activity.hinted,
                     uncertain,
                     now(),
+                    baseline=bool(activity.private.get("preAssessment")),
                 )
                 record["lastOutcome"]["partial"] = partial
                 record["assessmentIds"] = [*prior.get("assessmentIds", []), submission.id]

@@ -11,6 +11,8 @@ const routes = [
   /^activities\/[^/]+\/(?:hint|responses|present)$/,
   /^submissions\/[^/]+$/,
   /^agent-activity\/runs\/[^/]+(?:\/(?:commands|events|evaluation))?$/,
+  /^workbench\/courses\/[^/]+\/memories$/,
+  /^workbench\/memories\/[^/]+(?:\/(?:start|answer|retry|clear|chat))?$/,
 ];
 
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {

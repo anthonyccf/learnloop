@@ -36,7 +36,7 @@ class ExpertPromptTemplate(StrictModel):
     prompts: ExpertPromptStages
     enabledTools: list[str] = Field(default_factory=list, max_length=16)
     model: str = Field(min_length=1, max_length=200)
-    temperature: float = Field(ge=0, le=2)
+    temperature: float | None = Field(default=None, ge=0, le=2)
 
 
 class DocumentAnalyzeRequest(StrictModel):
@@ -86,7 +86,8 @@ class TopicGroup(StrictModel):
     id: str
     title: str = Field(min_length=1, max_length=100)
     summary: str = Field(min_length=10, max_length=500)
-    conceptIds: list[str] = Field(min_length=1)
+    parentId: str | None = None
+    conceptIds: list[str] = Field(default_factory=list)
 
 
 class TopicOrganization(StrictModel):
@@ -188,8 +189,13 @@ class OpenQuestion(StrictModel):
         return self
 
 
+class MultipleAnswerCriterion(WrittenCriterion):
+    choiceIds: list[ChoiceId] = Field(default_factory=list, max_length=3)
+
+
 class MultipleAnswerQuestion(OpenQuestion):
     format: Literal["multiple_answer"] = "multiple_answer"
+    rubric: list[MultipleAnswerCriterion] = Field(min_length=1, max_length=5)
     choices: list[Choice] = Field(min_length=4, max_length=4)
     correctChoiceIds: list[ChoiceId] = Field(min_length=2, max_length=3)
 
@@ -199,6 +205,10 @@ class MultipleAnswerQuestion(OpenQuestion):
             raise ValueError("Provide four distinct choices")
         if len(set(self.correctChoiceIds)) != len(self.correctChoiceIds):
             raise ValueError("Provide distinct correct choices and at least one distractor")
+        mapped = [choice for criterion in self.rubric for choice in criterion.choiceIds]
+        if mapped and (len(mapped) != len(set(mapped)) or set(mapped) != set(self.correctChoiceIds)
+                       or any(not criterion.choiceIds for criterion in self.rubric)):
+            raise ValueError("Map every correct choice to exactly one rubric criterion")
         return self
 
 
@@ -466,6 +476,17 @@ class TutorObservation(StrictModel):
 class TutorChatReply(StrictModel):
     text: str = Field(min_length=1, max_length=6000)
     observation: TutorObservation | None = None
+
+
+class WorkbenchDecision(StrictModel):
+    action: Literal["lesson", "quiz"]
+    reason: str = Field(min_length=5, max_length=600)
+
+
+class WorkbenchTutorReply(StrictModel):
+    text: str = Field(min_length=1, max_length=6000)
+    observation: TutorObservation | None = None
+    nextAction: Literal["lesson", "quiz", "none"]
 
 
 class RunCommand(StrictModel):

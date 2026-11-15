@@ -26,7 +26,8 @@ def course_graph(db, course_id, release_id=None):
         else {"concepts": [], "prerequisites": [], "topics": [], "related": []}
     )
     # Legacy targets are learner configuration, never a mutation of released content.
-    plan = db.scalar(select(LearningPlan).where(LearningPlan.course_id == course_id))
+    course_owner = db.scalar(select(Course.owner_id).where(Course.id == course_id))
+    plan = db.scalar(select(LearningPlan).where(LearningPlan.course_id == course_id, LearningPlan.owner_id == course_owner))
     overrides = plan.data.get("targetDifficulties", {}) if plan else {}
     for concept in graph["concepts"]:
         if not concept.get("curriculum") and concept["id"] in overrides:

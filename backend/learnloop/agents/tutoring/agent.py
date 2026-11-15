@@ -22,13 +22,71 @@ from learnloop.core.grounding import (
 )
 from learnloop.core.planning import candidates
 from learnloop.core.question_formats import public_prompt
+from learnloop.core.question_formats import parse_question
 from learnloop.core.schemas import PlanChoice, Question
-from learnloop.persistence.database import Activity, Course, Run, StudySession, now
+from learnloop.persistence.database import Activity, Course, Run, StudySession, now, uid
 from learnloop.persistence.learner_memory import learner_memory
 from learnloop.persistence.plans import get_plan, record_revision
 from learnloop.persistence.releases import pin_session
 from learnloop.persistence.repository import course_graph, grounding_chunks, learner, retrieve
 from learnloop.runtime.events import accept, pending, run_status, step
+from learnloop.runtime.handoffs import HandoffRequest
+from learnloop.persistence.releases import fingerprint, released_chunks
+
+
+def select_question_format(difficulty, previous, mixed_formats):
+    if not mixed_formats:
+        return "single_answer"
+    used = sum(activity.difficulty == difficulty for activity in previous)
+    if difficulty == "basic":
+        # The first encounter stays approachable; vary subsequent practice.
+        return "single_answer" if used == 0 else ("fill_in", "multiple_answer", "open", "single_answer")[(used - 1) % 4]
+    if difficulty == "intermediate":
+        return ("multiple_answer", "fill_in", "single_answer")[used % 3]
+    return ("open", "multiple_answer", "fill_in", "single_answer")[used % 4]
+
+
+def request_expert_question(factory, services, run_id, session_id, course_id, owner_id,
+                            release_id, concept, difficulty, prompts, question_format, diagnostic, private_prompts):
+    """Checkpoint a source-validated Expert result inside the parent worker run."""
+    key = fingerprint({"release": release_id, "concept": concept["id"], "difficulty": difficulty,
+                       "prompts": prompts, "format": question_format, "diagnostic": diagnostic})
+    with factory.begin() as db:
+        run = db.get(Run, run_id)
+        saved = run.input.get("_expert_question_handoff")
+        if saved and saved.get("key") == key and saved.get("status") == "completed":
+            chunks = released_chunks(db, course_id, release_id)
+            item = saved["result"]["question"]
+            receipt = saved["result"]["receipt"]
+            if grounding_valid(item, chunks, receipt):
+                return parse_question(item), [chunks[id] for id in saved["result"]["passageIds"]], receipt
+        request = (saved or {}).get("request") if saved and saved.get("key") == key else None
+        if not request:
+            request = HandoffRequest(requestId=uid(), parentRunId=run_id, sessionId=session_id,
+                stepId=run.input.get("workbench_step_id"), courseReleaseId=release_id,
+                conceptId=concept["id"], difficulty=difficulty, targetAgent="expert",
+                task="generate_question", input={"format": question_format, "reason": "No suitable unused question available"}).model_dump()
+        run.input = {**run.input, "_expert_question_handoff": {"key": key, "request": request, "status": "running"}}
+        step(db, run_id, "expert", "Tutor → Expert", "Preparing a source-grounded question for this concept.")
+    try:
+        with factory() as db:
+            passages = retrieve(db, services, course_id, owner_id, concept["title"] + " " + concept["summary"], release_id=release_id)
+        output, receipt = generate_question(services, concept, difficulty, prompts, passages,
+            diagnostic=diagnostic, private_prompts=private_prompts, question_format=question_format)
+    except Exception as error:
+        with factory.begin() as db:
+            run = db.get(Run, run_id)
+            handoff = run.input["_expert_question_handoff"]
+            message = error.message if isinstance(error, ServiceError) else "Expert question preparation was interrupted."
+            run.input = {**run.input, "_expert_question_handoff": {**handoff, "status": "failed", "summary": message}}
+        raise
+    with factory.begin() as db:
+        run = db.get(Run, run_id)
+        handoff = run.input["_expert_question_handoff"]
+        run.input = {**run.input, "_expert_question_handoff": {**handoff, "status": "completed", "result": {
+            "question": output.model_dump(), "receipt": receipt, "passageIds": [p["id"] for p in passages]}}}
+        step(db, run_id, "expert", "Expert → Tutor", "A source-validated question is ready.", status="completed")
+    return output, passages, receipt
 
 
 def run(factory, services, run_id):
@@ -64,8 +122,10 @@ def run(factory, services, run_id):
         state = learner(db, session.course_id, session.owner_id)
         target = run.input.get("target_concept_id")
         mixed_formats = run.input.get("mixed_question_formats")
+        learning_request = run.input.get("learning_request")
         graph = copy.deepcopy(course_graph(db, session.course_id, release_id))
-        if blocked := prerequisite_block(graph, state.evidence, target):
+        baseline = bool(run.input.get("workbench_pre_assessment"))
+        if not baseline and (blocked := prerequisite_block(graph, state.evidence, target)):
             raise ServiceError(blocked["code"], blocked["message"], False, blocked)
         plan = get_plan(db, session.course_id, session.owner_id, create=True)
         plan_version, goal = plan.version, copy.deepcopy(plan.goal)
@@ -80,7 +140,7 @@ def run(factory, services, run_id):
         review_dates.update(plan_data.get("reviewDates", {}))
         memory = learner_memory(db, state, release_id, graph["concepts"])
         options = candidates(
-            graph,
+            {**graph, "prerequisites": []} if baseline else graph,
             state.evidence,
             goal,
             target,
@@ -88,6 +148,8 @@ def run(factory, services, run_id):
             review_dates,
             memory=memory,
         )
+        if baseline:
+            options = [{**option, "difficulty": target_difficulty(next(c for c in graph["concepts"] if c["id"] == option["conceptId"]))} for option in options]
         if not options:
             run_status(
                 db,
@@ -98,12 +160,14 @@ def run(factory, services, run_id):
             return
         evidence_version = state.version
         course_id, owner_id = session.course_id, session.owner_id
+        content_owner_id = db.get(Course, course_id).owner_id
     offered = options[:12]
     choice = services.generate(
         "Tutoring",
         PLAN_PROMPT,
         {
             "goal": goal,
+            **({"learningRequest": learning_request} if learning_request else {}),
             "candidates": offered,
             "learnerMemory": {
                 c["conceptId"]: memory[c["conceptId"]] for c in offered
@@ -134,12 +198,7 @@ def run(factory, services, run_id):
             )
         )
         prompts = [a.public["prompt"] for a in previous]
-        question_format = "single_answer"
-        if mixed_formats and difficulty == "advanced":
-            question_format = "open"
-        elif mixed_formats and difficulty == "intermediate":
-            used = sum(a.public.get("format") in ("multiple_answer", "fill_in") for a in previous)
-            question_format = ("multiple_answer", "fill_in")[used % 2]
+        question_format = select_question_format(difficulty, previous, mixed_formats)
         private_prompts = {a.public["prompt"] for a in previous if a.private.get("memoryTarget")}
         if gap:
             target_ref = {key: gap[key] for key in ("id", "activityId", "assessmentId") if key in gap}
@@ -169,21 +228,23 @@ def run(factory, services, run_id):
     if output is None or memory_target:
         try:
             with factory() as db:
-                retrieved = retrieve(
-                    db,
-                    services,
-                    course_id,
-                    owner_id,
-                    concept["title"] + " " + concept["summary"],
-                    release_id=release_id,
+                is_workbench = bool(db.get(Run, run_id).input.get("workbench_memory_id"))
+            if is_workbench and output is None:
+                output, passages, reviewed_receipt = request_expert_question(
+                    factory, services, run_id, session.id, course_id, content_owner_id,
+                    release_id, concept, difficulty, prompts, question_format,
+                    gap["summary"] if memory_target else None, private_prompts)
+            else:
+                with factory() as db:
+                    retrieved = retrieve(db, services, course_id, content_owner_id,
+                        concept["title"] + " " + concept["summary"], release_id=release_id)
+                output, reviewed_receipt = generate_question(
+                    services, concept, difficulty, prompts, retrieved,
+                    diagnostic=gap["summary"] if memory_target else None,
+                    private_prompts=private_prompts,
+                    question_format=question_format,
                 )
-            output, reviewed_receipt = generate_question(
-                services, concept, difficulty, prompts, retrieved,
-                diagnostic=gap["summary"] if memory_target else None,
-                private_prompts=private_prompts,
-                question_format=question_format,
-            )
-            passages = retrieved
+                passages = retrieved
             on_demand = True
         except ServiceError:
             if output is None and question_format != "single_answer":
@@ -221,9 +282,9 @@ def run(factory, services, run_id):
                 "Learner evidence changed while planning. Retry using the latest state.",
             )
         current_graph = course_graph(db, course_id, release_id)
-        if blocked := prerequisite_block(current_graph, state.evidence, concept["id"]):
+        if not baseline and (blocked := prerequisite_block(current_graph, state.evidence, concept["id"])):
             raise ServiceError(blocked["code"], blocked["message"], False, blocked)
-        if current_graph != graph or not select_concept(current_graph, state.evidence, concept["id"]):
+        if current_graph != graph or (not baseline and not select_concept(current_graph, state.evidence, concept["id"])):
             raise ServiceError(
                 "plan_changed",
                 "Course relationships changed during planning. Retry using the current graph.",
@@ -243,7 +304,7 @@ def run(factory, services, run_id):
             )
             return
         current_chunks = grounding_chunks(
-            db, course_id, owner_id, source_ids(reviewed_item), release_id
+            db, course_id, content_owner_id, source_ids(reviewed_item), release_id
         )
         if not grounding_valid(reviewed_item, current_chunks, reviewed_receipt):
             raise ServiceError(

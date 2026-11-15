@@ -15,6 +15,7 @@ from learnloop.agents.tutoring.agent import run as tutor
 from learnloop.core.errors import ServiceError
 from learnloop.persistence.database import Document, Job, Run
 from learnloop.runtime.events import emit, run_status, step
+from learnloop.runtime.usage import MeteredServices, UsageRecorder
 
 WORKFLOW_HANDLERS = {
     "course_preparation": prepare,
@@ -55,7 +56,7 @@ class PromptConfiguredServices:
                 + json.dumps(self._retry_feedback, ensure_ascii=False)
             )
         template = self._template or {}
-        if role == "Expert":
+        if role == "Expert" and template.get("agent") != "tutor":
             prompts = template.get("prompts", {})
             additions = [
                 prompts.get(stage, "").strip()
@@ -68,11 +69,19 @@ class PromptConfiguredServices:
                     + "\n\nAdditional instructions from the selected Expert template:\n"
                     + "\n\n".join(additions)
                 )
-        model = template.get("model")
+        if role == "Tutoring" and template.get("agent") == "tutor" and output.__name__ in ("PlanChoice", "WorkbenchDecision"):
+            addition = template.get("prompts", {}).get("analysis", "").strip()
+            if addition:
+                instruction += "\n\nAdditional Tutor planning instructions:\n" + addition
+        if role == "Tutoring" and template.get("agent") == "tutor" and output.__name__ == "WorkbenchTutorReply":
+            addition = template.get("prompts", {}).get("lesson", "").strip()
+            if addition:
+                instruction += "\n\nAdditional Tutor response instructions:\n" + addition
+        model = template.get("model") if template.get("agent") != "tutor" or role == "Tutoring" else None
         if not model or model == "configured":
             model = None
         try:
-            if not self._template:
+            if not self._template or (template.get("agent") == "tutor" and role != "Tutoring"):
                 return self._services.generate(role, instruction, context, output)
             return self._services.generate(
                 role,
@@ -130,6 +139,7 @@ def execute(factory, services, run_id):
         workflow = run.snapshot["workflow"]
         template = run.input.get("prompt_template")
         retry_feedback = run.input.get("failureDiagnostics")
+        is_workbench = bool(run.input.get("workbench_memory_id"))
     if not services.settings.generation_ready:
         with factory.begin() as db:
             run_status(
@@ -140,15 +150,41 @@ def execute(factory, services, run_id):
                 ["resume"],
             )
         return
-    if workflow == "course_preparation":
+    usage = UsageRecorder() if is_workbench else None
+    if usage:
+        services = MeteredServices(services, usage)
+    try:
+        _execute_workflow(factory, services, run_id, workflow, template, retry_feedback)
+    finally:
+        if usage:
+            with factory.begin() as db:
+                run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+                if run:
+                    run.input = {**run.input, "_usage_calls": [*run.input.get("_usage_calls", []), *usage.calls()]}
+
+
+def _execute_workflow(factory, services, run_id, workflow, template, retry_feedback):
+    if workflow == "course_preparation" or (workflow == "next_activity" and template and template.get("agent") == "tutor"):
         model_recorder = RunModelRecorder()
         run_services = PromptConfiguredServices(
             services, template, retry_feedback, model_recorder
         )
         try:
-            WORKFLOW_HANDLERS[workflow](factory, run_services, run_id)
+            _call_handler(factory, run_services, run_id, workflow)
         finally:
             model_recorder.persist(factory, run_id)
+    else:
+        _call_handler(factory, services, run_id, workflow)
+
+
+def _call_handler(factory, services, run_id, workflow):
+    with factory() as db:
+        run = db.get(Run, run_id)
+        auto = workflow == "next_activity" and run.input.get("workbench_auto")
+    if auto:
+        from learnloop.agents.tutoring.workbench import run_auto
+
+        run_auto(factory, services, run_id)
     else:
         WORKFLOW_HANDLERS[workflow](factory, services, run_id)
 

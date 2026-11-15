@@ -1,2 +1,3 @@
-import { LiveWorkspace } from "@/components/live-workspace";
-export default function Page() { return <LiveWorkspace view="learn" />; }
+import { TutorLearning } from "@/components/tutor-learning";
+
+export default function Page() { return <TutorLearning learner />; }

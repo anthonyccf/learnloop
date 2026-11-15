@@ -3,11 +3,12 @@ export type Course = { id: string; title: string };
 export type Difficulty = "basic" | "intermediate" | "advanced";
 export type Reference = { documentId: string; label: string; page?: number };
 export type CourseDetail = Course & {
+  release?: { id: string; version: number; sha256: string } | null;
   documents: { id: string; filename: string; status: string; pages: number; lessonCount: number; postLessonCount?: number; testCount: number; sourceWarnings?: { conceptId: string; title?: string; message: string }[];
     coverage?: { analysisVersion?: number; processedPassages?: number; selectedPassages?: number; totalPassages?: number; reviewedSections?: number; totalSections?: number } }[];
   graph: { concepts: { id: string; title: string; summary: string; curriculum?: CurriculumObjective | null; targetDifficulty?: Difficulty; sources: { chunkId: string; quote: string }[] }[];
     prerequisites: { prerequisite: string; dependent: string; rationale?: string }[];
-    topics?: { id: string; title: string; summary: string; conceptIds: string[] }[];
+    topics?: { id: string; title: string; summary: string; parentId?: string | null; conceptIds: string[] }[];
     related?: { first: string; second: string; rationale: string }[];
     organization?: { conceptCount: number; groupedConceptCount: number; topicCount: number; documentCount: number; reviewed: boolean } };
 };
@@ -19,7 +20,7 @@ export function targetDifficulty(concept: TargetConcept): Difficulty {
 export function overallState(concept: TargetConcept, learner: LearnerState | null | undefined) {
   return learner?.overallStates?.[concept.id] || learner?.concepts[concept.id]?.[targetDifficulty(concept)]?.state || "unassessed";
 }
-export type Assessment = { correct: boolean; uncertain: boolean; hinted: boolean; feedback: string; explanation: string;
+export type Assessment = { correct: boolean; uncertain: boolean; hinted: boolean; notSure?: boolean; feedback: string; explanation: string;
   rubricScore?: number; partial?: boolean; contradiction?: boolean;
   confirmedWeakness?: boolean; evidenceOutcome?: string;
   rubricCoverage?: { criterionId: string; description: string; score: number; reason: string }[];

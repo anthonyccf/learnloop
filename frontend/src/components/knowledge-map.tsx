@@ -13,6 +13,7 @@ import { CurriculumMap } from "./curriculum-map";
 import { SpatialExplorer } from "./spatial-explorer";
 import { layerOf, layerNames, layerBadge, type CurriculumLayer } from "@/lib/curriculum-map";
 import { placeMapPreview } from "@/lib/map-preview";
+import { TutorBrainMemory, type BrainStates } from "./tutor-brain-memory";
 
 const states: Record<string, string> = { unassessed: "Not assessed", developing: "Developing", demonstrated: "Demonstrated", review_due: "Review due" };
 
@@ -21,6 +22,7 @@ export function KnowledgeMap() {
   const [selection, setSelection] = useState<KnowledgeView>(() => readKnowledgeView(new URLSearchParams()));
   const [panel, setPanel] = useState<"filters" | "options" | "concept" | null>(null);
   const [mobile, setMobile] = useState(false);
+  const [hierarchyOpen, setHierarchyOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const zoomValue = useRef(1);
   const zoomTarget = useRef(1);
@@ -222,13 +224,24 @@ export function KnowledgeMap() {
 
 
   if (!course?.graph.concepts.length) return <section className="simple-map"><header className="simple-map-heading"><div><p>{course?.title}</p><h1>My understanding</h1></div></header><h2>Your map starts with your materials</h2><p>Concepts and connections appear when your materials are ready.</p><Link href="/materials" className="button dark">View materials</Link></section>;
+  if (hierarchyOpen) {
+    const evidence: BrainStates = {};
+    for (const concept of course.graph.concepts) {
+      const at = (level: "basic" | "intermediate" | "advanced") => {
+        const state = learner?.concepts[concept.id]?.[level]?.state;
+        return state === "developing" || state === "demonstrated" || state === "review_due" ? state : "unassessed";
+      };
+      evidence[concept.id] = { basic: at("basic"), intermediate: at("intermediate"), advanced: at("advanced") };
+    }
+    return <div className="simple-map"><header className="simple-map-heading"><div><p>{course.title}</p><h1>Topic hierarchy</h1></div><button onClick={() => setHierarchyOpen(false)}>Other map views</button></header><section className="expert-card tutor-workbench-card"><TutorBrainMemory key={course.id} graph={{ concepts: course.graph.concepts.map(concept => ({ id: concept.id, title: concept.title, targetDifficulty: targetDifficulty(concept) })), topics: course.graph.topics, prerequisites: course.graph.prerequisites, related: course.graph.related || [] }} states={evidence} gaps={{}} showEvidence={personal} onOpenConcept={id => select({ id })} /></section>{panel === "concept" && selected && <LearningDialog title={selected.title} onClose={closePanel}><KnowledgeDetails key={selected.id} conceptId={selected.id} personal={personal} topicTitle={layout.groups.find(group => group.id === selected.groupId)?.title || "Course concepts"} onSelect={id => select({ id })} /></LearningDialog>}</div>;
+  }
   const groups = [...topics.map(topic => ({ id: topic.id, title: topic.title, nodes: topic.conceptIds.flatMap(id => { const node = positions.get(id); return node && matches.has(id) ? [node] : []; }) })),
     { id: "ungrouped", title: topics.length ? "Other concepts" : "Course concepts", nodes: layout.nodes.filter(node => !topicFor.has(node.id) && matches.has(node.id)) }].filter(group => group.nodes.length);
 
   return <div className="simple-map">
     <header className="simple-map-heading"><div><p>{course.title}</p><h1>My understanding</h1></div><button onClick={() => setPanel("options")} aria-label="Map options">Options <span className="map-options-chevron" aria-hidden="true" /></button></header>
     <div className="simple-map-search"><input type="search" aria-label="Find a concept" placeholder="Search concepts or topics…" value={query} onChange={event => update({ query: event.target.value })} /><button onClick={() => setPanel("filters")}>Filters{filterCount > 0 ? ` (${filterCount})` : ""}</button></div>
-    <div className="curriculum-view-toolbar"><div role="group" aria-label="Map layout">{([['pyramid','Learning pyramid'],['atlas','Topic atlas'],['space','Explore in 3D']] as const).map(([value,label])=><button key={value} aria-pressed={selection.layout===value} onClick={()=>update({layout:value})}>{label}</button>)}</div><button onClick={()=>update({display:showList?"map":"list"})}>{showList?"Show map":"List view"}</button></div>
+    <div className="curriculum-view-toolbar"><div role="group" aria-label="Map layout">{([['pyramid','Learning pyramid'],['atlas','Topic atlas'],['space','Explore in 3D']] as const).map(([value,label])=><button key={value} aria-pressed={selection.layout===value} onClick={()=>update({layout:value})}>{label}</button>)}<button type="button" onClick={() => { setPanel(null); setHierarchyOpen(true); }}>Topic hierarchy</button></div><button onClick={()=>update({display:showList?"map":"list"})}>{showList?"Show map":"List view"}</button></div>
     <div className="curriculum-layer-filters" role="group" aria-label="Curriculum layer"><span>Curriculum</span>{(["all","basic","intermediate","advanced",...(layout.nodes.some(n=>layerOf(n)==="unassigned")?["unassigned"]:[])] as const).map(value=><button key={value} aria-pressed={selection.layer===value} onClick={()=>update({layer:value as KnowledgeView["layer"]})}>{value==="all"?"All":layerNames[value as CurriculumLayer]} <b>{layout.nodes.filter(n=>value==="all"||layerOf(n)===value).length}</b></button>)}</div>
     <div className="simple-map-summary">{personal ? <><span>Evidence at each concept’s curriculum difficulty</span><span>: {Object.entries(states).map(([state, label]) => `${layout.nodes.filter(node => stateAt(node.id) === state).length} ${label.toLowerCase()}`).join(" · ")}</span></> : <span>Course structure · {layout.nodes.length} concepts · {layout.edges.length} prerequisite links</span>}</div>
     {(filterCount > 0 || query) && <div className="simple-map-active"><span>{matches.size} of {layout.nodes.length} concepts match</span>{selection.layer !== "all" && <button onClick={()=>update({layer:"all"})}>Layer: {selection.layer} ×</button>}{topicFilter !== "all" && <button onClick={() => update({ topic: "all" })}>Topic: {topics.find(topic => topic.id === topicFilter)?.title || "Unavailable topic"} ×</button>}{material !== "all" && <button onClick={() => update({ material: "all" })}>Material: {course.documents.find(doc => doc.id === material)?.filename || "Unavailable material"} ×</button>}{personal && status !== "all" && <button onClick={() => update({ status: "all" })}>{states[status]} ×</button>}<button onClick={clearFilters}>Clear filters</button></div>}

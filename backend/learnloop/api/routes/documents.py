@@ -240,6 +240,9 @@ def build_router(context: ApiContext):
             doc_status = view["status"] if view else doc.status
             snapshot_chunks = [SimpleNamespace(**c) for c in view["chunks"]] if view else None
             snapshot_embeddings = {c.id: SimpleNamespace(**c.embedding) for c in snapshot_chunks if c.embedding} if view else None
+            page_count = view["pages"] if view else doc.pages
+            extracted_pages = {chunk.page for chunk in snapshot_chunks} if view else set(db.scalars(select(Chunk.page).where(Chunk.document_id == doc.id).distinct()))
+            missing_text_pages = [page for page in range(1, page_count + 1) if page not in extracted_pages] if page_count and extracted_pages and doc.filename.lower().endswith(".pdf") else []
             concepts = graph.get("concepts", [])
             resources = graph.get("resources", {})
             chunk_count = len(snapshot_chunks) if view else db.scalar(
@@ -582,6 +585,7 @@ def build_router(context: ApiContext):
                     "filename": view["filename"] if view else doc.filename,
                     "status": doc_status,
                     "pages": view["pages"] if view else doc.pages,
+                    "missingTextPages": missing_text_pages,
                     "analysisComplete": graph.get("analysis", {}).get("complete", False),
                     "coverage": graph.get("coverage"),
                 },

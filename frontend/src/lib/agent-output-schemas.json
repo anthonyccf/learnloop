@@ -838,30 +838,7 @@
           "title": "Choice",
           "type": "object"
         },
-        "Source": {
-          "additionalProperties": false,
-          "properties": {
-            "chunkId": {
-              "maxLength": 100,
-              "minLength": 1,
-              "title": "Chunkid",
-              "type": "string"
-            },
-            "quote": {
-              "maxLength": 600,
-              "minLength": 10,
-              "title": "Quote",
-              "type": "string"
-            }
-          },
-          "required": [
-            "chunkId",
-            "quote"
-          ],
-          "title": "Source",
-          "type": "object"
-        },
-        "WrittenCriterion": {
+        "MultipleAnswerCriterion": {
           "additionalProperties": false,
           "properties": {
             "id": {
@@ -889,15 +866,53 @@
               "minItems": 1,
               "title": "Sources",
               "type": "array"
+            },
+            "choiceIds": {
+              "items": {
+                "enum": [
+                  "a",
+                  "b",
+                  "c",
+                  "d"
+                ],
+                "type": "string"
+              },
+              "maxItems": 3,
+              "title": "Choiceids",
+              "type": "array"
             }
           },
           "required": [
             "id",
             "description",
             "weight",
-            "sources"
+            "sources",
+            "choiceIds"
           ],
-          "title": "WrittenCriterion",
+          "title": "MultipleAnswerCriterion",
+          "type": "object"
+        },
+        "Source": {
+          "additionalProperties": false,
+          "properties": {
+            "chunkId": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Chunkid",
+              "type": "string"
+            },
+            "quote": {
+              "maxLength": 600,
+              "minLength": 10,
+              "title": "Quote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunkId",
+            "quote"
+          ],
+          "title": "Source",
           "type": "object"
         }
       },
@@ -953,7 +968,7 @@
         },
         "rubric": {
           "items": {
-            "$ref": "#/$defs/WrittenCriterion"
+            "$ref": "#/$defs/MultipleAnswerCriterion"
           },
           "maxItems": 5,
           "minItems": 1,

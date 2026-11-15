@@ -4,12 +4,13 @@ import copy
 
 from sqlalchemy import select
 
+from learnloop.agents.expert.candidate_index import ConceptCandidateIndex
 from learnloop.agents.expert.organization import catalog_signature
 from learnloop.agents.expert.prompts import MERGE_PROMPT
 from learnloop.core.domain import validate_graph
 from learnloop.core.errors import ServiceError
 from learnloop.core.schemas import ConceptMatches
-from learnloop.persistence.database import Course, Document
+from learnloop.persistence.database import Course, CourseRelease, Document, Run
 from learnloop.runtime.events import step
 
 
@@ -32,34 +33,58 @@ def deduplicate_course(factory, services, run_id, document_id):
         signature = catalog_signature(concepts)
         if all(d.graph.get("deduplication") == signature for d in docs):
             return
+        # Older sessions can still refer to a historical release.
+        published_ids = {
+            concept["id"]
+            for release in db.scalars(select(CourseRelease).where(CourseRelease.course_id == course_id))
+            for concept in release.payload["graph"]["concepts"]
+        }
+        checkpoint = copy.deepcopy(db.get(Run, run_id).input.get("duplicateReviewDraft", {}))
+    if checkpoint.get("signature") != signature:
+        checkpoint = {"signature": signature, "decisions": {}}
     catalog, aliases = [], {}
     for doc in docs:
         candidates = doc.graph.get("concepts", [])
         if catalog and candidates:
-            matches = services.generate(
-                "Expert",
-                MERGE_PROMPT
-                + "\nThese are concepts from different uploaded documents in the SAME course. Merge only identical teaching objectives, never merely related goals. Keep foundations, applications and synthesis distinct.",
-                {
-                    "existing": [
-                        {"id": c["id"], "title": c["title"], "summary": c["summary"]}
-                        for c in catalog
-                    ],
-                    "candidates": candidates,
-                },
-                ConceptMatches,
-            )
-            candidate_ids, known = {c["id"] for c in candidates}, {c["id"] for c in catalog}
-            for m in matches.matches:
-                if m.candidateId not in candidate_ids or m.existingId not in known:
-                    raise ServiceError(
-                        "invalid_merge", "Course duplicate mapping must use supplied IDs.", True
+            index = ConceptCandidateIndex(catalog)
+            for candidate in candidates:
+                # Published concepts may already have learner evidence. Their
+                # identities cannot be merged by an automatic model decision.
+                if candidate["id"] in published_ids:
+                    continue
+                nearby = index.search(candidate)
+                if not nearby:
+                    continue
+                known = {c["id"] for c in nearby}
+                decisions = checkpoint["decisions"]
+                if candidate["id"] not in decisions:
+                    matches = services.generate(
+                        "Expert",
+                        MERGE_PROMPT
+                        + "\nThese are concepts from different uploaded documents in the SAME course. Merge only identical teaching objectives, never merely related goals. Keep foundations, applications and synthesis distinct.",
+                        {
+                            "existing": [
+                                {"id": c["id"], "title": c["title"], "summary": c["summary"]}
+                                for c in nearby
+                            ],
+                            "candidates": [candidate],
+                        },
+                        ConceptMatches,
                     )
-                if m.candidateId in aliases and aliases[m.candidateId] != m.existingId:
-                    raise ServiceError(
-                        "invalid_merge", "A repeated goal must have one primary home.", True
-                    )
-                aliases[m.candidateId] = m.existingId
+                    if any(m.candidateId != candidate["id"] or m.existingId not in known for m in matches.matches):
+                        raise ServiceError("invalid_merge", "Course duplicate mapping must use supplied IDs.", True)
+                    targets = {m.existingId for m in matches.matches}
+                    if len(targets) > 1:
+                        raise ServiceError("invalid_merge", "A repeated goal must have one primary home.", True)
+                    decisions[candidate["id"]] = next(iter(targets), None)
+                    with factory.begin() as db:
+                        run = db.get(Run, run_id)
+                        run.input = {**run.input, "duplicateReviewDraft": copy.deepcopy(checkpoint)}
+                target = decisions[candidate["id"]]
+                if target is not None:
+                    if target not in known:
+                        raise ServiceError("invalid_merge", "A saved duplicate match is no longer available.", True)
+                    aliases[candidate["id"]] = target
         catalog.extend(c for c in candidates if c["id"] not in aliases)
     edges, seen = [], set()
     for doc in docs:

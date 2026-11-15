@@ -51,6 +51,10 @@ class ApiContext:
         if model is Course or hasattr(item, "owner_id"):
             valid = item.owner_id == owner_id
         else:
+            if isinstance(item, Activity):
+                session = db.get(StudySession, item.session_id)
+                if session.owner_id != owner_id:
+                    raise HTTPException(404, "Resource not found.")
             course_id = (
                 item.course_id
                 if hasattr(item, "course_id")

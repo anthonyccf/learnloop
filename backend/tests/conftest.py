@@ -28,6 +28,8 @@ from learnloop.core.schemas import (
     QuestionRubric,
     SectionGraph,
     TopicOrganization,
+    WorkbenchDecision,
+    WorkbenchTutorReply,
 )
 from learnloop.persistence.database import Base, session_factory
 
@@ -94,6 +96,11 @@ class FakeServices:
                 candidateId=context["candidates"][0]["id"],
                 rationale="This action addresses the highest-priority eligible learning need.",
             )
+        if output is WorkbenchDecision:
+            action = "quiz" if "quiz" in context.get("learningRequest", "").lower() else "lesson"
+            return WorkbenchDecision(action=action, reason="This activity matches the learner's current needs.")
+        if output is WorkbenchTutorReply:
+            return WorkbenchTutorReply(text="Let’s examine the underlying idea.", observation=None, nextAction="lesson")
         if output is QuestionRubric:
             source = context["passages"][0]
             return QuestionRubric(

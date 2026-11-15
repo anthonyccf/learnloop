@@ -15,7 +15,7 @@ from learnloop.agents.expert.prompts import RELATION_PROMPT, REVIEW_PROMPT, TOPI
 from learnloop.core.domain import validate_graph
 from learnloop.core.errors import ServiceError
 from learnloop.core.schemas import CourseRelationships, TopicOrganization
-from learnloop.persistence.database import Chunk, Course, Document, Run
+from learnloop.persistence.database import Chunk, Course, CourseRelease, Document, Run
 from learnloop.runtime.events import accept, pending, run_status, step
 
 ORGANIZATION_VERSION = 1
@@ -41,6 +41,7 @@ def current_organization(documents, concepts):
 def validate_topics(concepts, topics):
     ids = {c["id"] for c in concepts}
     members = [id for topic in topics for id in topic["conceptIds"]]
+    topic_ids = {topic["id"] for topic in topics}
     if (
         set(members) != ids
         or len(members) != len(ids)
@@ -49,6 +50,18 @@ def validate_topics(concepts, topics):
         raise ServiceError(
             "invalid_organization", "Topic groups must contain every concept exactly once.", True
         )
+    parents = {topic["id"]: topic.get("parentId") for topic in topics}
+    if any(parent is not None and parent not in topic_ids for parent in parents.values()):
+        raise ServiceError("invalid_organization", "Topic parent must be a known topic.", True)
+    for topic in topics:
+        if not topic["conceptIds"] and topic["id"] not in parents.values():
+            raise ServiceError("invalid_organization", "A topic cannot be an empty leaf.", True)
+        seen, current = set(), topic["id"]
+        while current is not None:
+            if current in seen:
+                raise ServiceError("invalid_organization", "Topic hierarchy cannot contain cycles.", True)
+            seen.add(current)
+            current = parents[current]
 
 
 def normalize_related(concepts, relationships):
@@ -155,6 +168,13 @@ def organize_course(factory, services, run_id, document_id):
         checkpoint = copy.deepcopy(db.get(Run, run_id).input.get("organizationDraft", {}))
         course_id = anchor.course_id
         existing = [e for doc in documents for e in doc.graph.get("prerequisites", [])]
+        latest_release = db.scalar(
+            select(CourseRelease)
+            .where(CourseRelease.course_id == course_id)
+            .order_by(CourseRelease.version.desc())
+            .limit(1)
+        )
+        previous_topics = (latest_release.payload.get("graph", {}) if latest_release else {}).get("topics", [])
     signature = catalog_signature(concepts)
     if checkpoint.get("signature") != signature:
         checkpoint = {"signature": signature}
@@ -181,6 +201,10 @@ def organize_course(factory, services, run_id, document_id):
     ]
     context = {
         "concepts": compact,
+        "existingTopicMap": [
+            {"id": t["id"], "parentId": t.get("parentId"), "title": t["title"], "summary": t["summary"], "conceptIds": t["conceptIds"]}
+            for t in previous_topics
+        ],
         "existingPrerequisites": [
             {"prerequisite": aliases[e["prerequisite"]], "dependent": aliases[e["dependent"]]}
             for e in existing
@@ -210,10 +234,13 @@ def organize_course(factory, services, run_id, document_id):
             "Expert sub-agents are organizing topics and reviewing course-wide relationships.",
         )
     # Independent calls: neither analyst sees the other's output.
+    topic_prompt = TOPIC_PROMPT
+    if previous_topics:
+        topic_prompt += "\nThis course already has a published topic map in existingTopicMap. Autonomously update the grouping to account for the new material: keep useful branches, move concepts when the combined evidence supports a better fit, and create or nest topics when needed. Preserve the IDs and meanings of concepts; reuse a topic ID when retaining that topic. No human approval is required for ordinary regrouping."
     with ThreadPoolExecutor(max_workers=2) as pool:
         tasks = []
         for name, prompt, schema, label in [
-            ("topics", TOPIC_PROMPT, TopicOrganization, "Course Organizer: group all concepts"),
+            ("topics", topic_prompt, TopicOrganization, "Course Organizer: update course topic map"),
             (
                 "relationships",
                 RELATION_PROMPT,
@@ -280,10 +307,16 @@ def organize_course(factory, services, run_id, document_id):
         raise ServiceError(error.code, error.message, True) from error
     reverse = {alias: id for id, alias in aliases.items()}
     reverse_sources = {alias: id for id, alias in source_aliases.items()}
+    previous_topic_ids = {topic["id"] for topic in previous_topics}
     topics = [
         {
             **t,
-            "id": f"{document_id}:{t['id']}",
+            "id": t["id"] if t["id"] in previous_topic_ids else f"{document_id}:{t['id']}",
+            "parentId": (
+                t["parentId"]
+                if t.get("parentId") in previous_topic_ids
+                else f"{document_id}:{t['parentId']}" if t.get("parentId") else None
+            ),
             "conceptIds": [reverse[id] for id in t["conceptIds"]],
         }
         for t in checkpoint["topics"]["topics"]

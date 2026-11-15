@@ -126,6 +126,17 @@ class LearnerState(Base):
     evidence: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class WorkbenchMemory(Base):
+    __tablename__ = "ll_workbench_memories"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    course_id: Mapped[str] = mapped_column(ForeignKey("ll_courses.id"), index=True)
+    owner_id: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=now)
+
+
 class StudySession(Base):
     __tablename__ = "ll_sessions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { api } from "@/lib/backend";
 import { useWorkspace } from "@/components/workspace-provider";
 import { ExpertWorkbenchShell } from "@/components/expert-workbench-shell";
-import { readExpertTemplates, type AgentPromptTemplate } from "@/lib/expert-templates";
+import { ExpertTutorHandoffs } from "@/components/expert-tutor-handoffs";
+import { ExpertHierarchyReview } from "@/components/expert-hierarchy-review";
+import { formatTemplateTemperature, readExpertTemplates, type AgentPromptTemplate } from "@/lib/expert-templates";
 
 type InspectionKind = "source_chunks" | "concepts" | "lessons" | "questions" | "embeddings";
 type InspectionRow = Record<string, unknown>;
@@ -18,6 +20,7 @@ type Inspection = {
     filename: string;
     status: string;
     pages: number;
+    missingTextPages?: number[];
     analysisComplete: boolean;
     coverage?: { processedPassages?: number; totalPassages?: number; totalSections?: number; mergedConceptCount?: number } | null;
   };
@@ -504,7 +507,7 @@ export default function ExpertWorkbenchPage() {
       </label>
       {runTemplates.map((template) => <label key={template.id} className={`expert-run-template-option ${selectedTemplateId === template.id ? "selected" : ""}`}>
         <input type="radio" name="expert-run-template" checked={selectedTemplateId === template.id} onChange={() => chooseRunTemplate(template.id)} />
-        <span><strong>{template.name}</strong><small>{template.model} · temp {template.temperature.toFixed(1)}</small></span>
+        <span><strong>{template.name}</strong><small>{template.model} · {formatTemplateTemperature(template.temperature)}</small></span>
       </label>)}
       {!runTemplates.length && <p className="expert-run-template-empty">Save an Expert template in Edit agent to run it here.</p>}
     </section>
@@ -593,6 +596,9 @@ export default function ExpertWorkbenchPage() {
             {latestStep?.detail && active && <p className="expert-current-step" role="status">Current Expert step: {latestStep.detail}</p>}
           </section>
 
+          <ExpertTutorHandoffs courseId={ws.courseId} concepts={ws.course?.graph.concepts || []} />
+
+          {ws.course && <ExpertHierarchyReview key={`${ws.course.id}:${ws.course.release?.id || "none"}`} course={ws.course} onSaved={ws.refresh} />}
           <section className="expert-card expert-activity-panel" aria-labelledby="expert-activity-title">
             <div className="expert-card-heading"><div><h2 id="expert-activity-title">Expert activity log</h2><p>{currentRun ? runDetail?.summary || currentRun.summary : "Activity from Expert runs will appear here."}</p></div>{currentRun && <span className={`expert-status-tag ${hasWarnings && runStatus === "completed" ? "needs_review" : runDetail?.status || currentRun.status}`}>{runLabel}</span>}</div>
             {currentRun ? <div className="expert-activity-meta"><span>Run <code>{currentRun.id}</code></span>{runDetail?.currentAgent && <span>Active agent: {readable(runDetail.currentAgent)}</span>}<span>{runDetail?.events?.length || 0} events</span></div> : <div className="expert-activity-meta"><span>Material: {selectedDocument?.filename || "No material selected"}</span><span>No run record yet</span></div>}
@@ -674,6 +680,7 @@ export default function ExpertWorkbenchPage() {
           {inspection && <div className="expert-inspector-footer"><span>Showing {inspection.total ? `${offset + 1}–${pageEnd}` : "0"} of {inspection.total} {readable(kind)}</span><div><button type="button" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - inspection.limit))} aria-label="Previous records">‹</button><button type="button" disabled={pageEnd >= inspection.total} onClick={() => setOffset(offset + inspection.limit)} aria-label="Next records">›</button></div></div>}
           </>}
           {inspection?.document.coverage && <details className="expert-coverage"><summary>Preparation coverage</summary><p>{inspection.document.coverage.processedPassages ?? 0} of {inspection.document.coverage.totalPassages ?? 0} passages reviewed across {inspection.document.coverage.totalSections ?? 0} sections.</p></details>}
+          {Boolean(inspection?.document.missingTextPages?.length) && <p className="expert-alert" role="status">No text was extracted from PDF page{inspection!.document.missingTextPages!.length === 1 ? "" : "s"} {inspection!.document.missingTextPages!.join(", ")}. They may be blank or image-based; image-only content is not included because OCR is not available.</p>}
           {!!inspection?.document.coverage?.mergedConceptCount && <p className="expert-muted">{inspection.document.coverage.mergedConceptCount} concepts from this material were merged with existing concepts in other course materials. Inspect those materials to see their records.</p>}
         </section>
       </div>}

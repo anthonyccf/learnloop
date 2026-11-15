@@ -92,9 +92,9 @@ def verify_keys(services, questions, chunks):
 
 
 FORMAT_INSTRUCTIONS = {
-    "multiple_answer": "Write four options with two or three correct answers. Assess the exact set.",
+    "multiple_answer": "Write four options with two or three correct answers. Map each correct choice exactly once using choiceIds on its rubric criterion; each criterion must have at least one choiceId. Do not map distractors.",
     "fill_in": "Mark blanks as [[id]], include accepted equivalents, and use one rubric criterion per blank ID. Include the required units or precision in the prompt.",
-    "open": "Ask for reasoning or application. Supply a reference answer and source-backed criteria that accept valid alternative reasoning.",
+    "open": "Ask a short question appropriate to the requested difficulty: direct recall or a simple explanation at Basic, application at Intermediate, and reasoning at Advanced. Supply a reference answer and clear, source-backed criteria that accept valid alternative wording or reasoning. Where the answer has independently meaningful parts, use separate weighted criteria for those parts; avoid artificial criteria or awarding full credit for a list of terms that omits an essential relationship. Describe what each criterion requires so partial understanding can be assessed.",
 }
 MIXED_PROMPT = """Write one question in the requested format and difficulty. Use only the supplied course passages.
 Basic tests direct understanding, Intermediate tests application, and Advanced tests reasoning across ideas.
@@ -180,6 +180,8 @@ def generate_question(
                 raise ServiceError(
                     "invalid_model_output", "A private answer and rubric are required.", False
                 )
+            if isinstance(question, MultipleAnswerQuestion) and any(not c.choiceIds for c in question.rubric):
+                raise ServiceError("invalid_model_output", "Map each correct option to a rubric criterion.", False)
             item = question.model_dump()
             if isinstance(question, Question):
                 receipt = review_grounding(services, "Expert", item, chunks)

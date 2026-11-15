@@ -79,6 +79,9 @@ def test_pdf_slide_images_preserve_page_orientation_and_owner_scope(stack):
     ).json()
     with factory.begin() as db:
         db.get(Document, uploaded["documentId"]).pages = 2
+        db.add(Chunk(id="inspection-test-chunk", document_id=uploaded["documentId"], course_id=course["id"], ordinal=0, page=1, text="Extracted page text."))
+    inspection = client.get(f"/api/documents/{uploaded['documentId']}/inspection").json()
+    assert inspection["document"]["missingTextPages"] == [2]
     route = f"/api/documents/{uploaded['documentId']}/pages"
     for page in (1, 2):
         image = client.get(f"{route}/{page}/slide")

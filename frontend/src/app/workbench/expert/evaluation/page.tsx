@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ExpertWorkbenchShell } from "@/components/expert-workbench-shell";
 import { api } from "@/lib/backend";
 import { useWorkspace } from "@/components/workspace-provider";
-import { promptStagesByAgent, readExpertTemplates, workbenchAgents, type AgentPromptTemplate, type WorkbenchAgent } from "@/lib/expert-templates";
+import { formatTemplateTemperature, promptStagesByAgent, readExpertTemplates, workbenchAgents, type AgentPromptTemplate, type WorkbenchAgent } from "@/lib/expert-templates";
 
 type Evaluation = { runId: string; snapshotAvailable: boolean; elapsedSeconds: number | null; retriesUsed: number | null; concepts: number | null; conceptsWithSourceLinks: number | null; processedPassages: number | null; totalPassages: number | null; reviewPassRate: null; cost: null };
 
@@ -101,7 +101,7 @@ export default function ExpertEvaluationPage() {
     <p className="expert-run-template-empty">{selectedTemplates.length} of 3 selected · {agentConfig.label}</p>
     {agentTemplates.map((template) => <label key={template.id} className={`expert-run-template-option ${selectedIds.includes(template.id) ? "selected" : ""}`}>
       <input type="checkbox" checked={selectedIds.includes(template.id)} disabled={!selectedIds.includes(template.id) && selectedIds.length >= 3} onChange={() => toggleTemplate(template.id)} />
-      <span><strong title={template.name}>{template.name}</strong><small>{template.model} · temp {template.temperature.toFixed(1)}</small></span>
+      <span><strong title={template.name}>{template.name}</strong><small>{template.model} · {formatTemplateTemperature(template.temperature)}</small></span>
     </label>)}
     {!agentTemplates.length && <p className="expert-run-template-empty">No {agentConfig.label} templates saved. <Link href={`/workbench/expert/edit?agent=${agent}`}>Open Edit agent</Link> to create one.</p>}
   </section></>;
@@ -146,7 +146,7 @@ export default function ExpertEvaluationPage() {
         <div className="expert-card-heading"><div><h2 id="expert-config-comparison-title">Configuration comparison</h2><p>Inspect the selected prompt and model settings side by side.</p></div></div>
         <div className="expert-config-table-wrap"><table className="expert-config-table"><thead><tr><th>Setting</th>{selectedTemplates.map((template) => <th key={template.id}>{template.name}</th>)}</tr></thead><tbody>
           <tr><th>Model</th>{selectedTemplates.map((template) => <td key={template.id}>{template.model}</td>)}</tr>
-          <tr><th>Temperature</th>{selectedTemplates.map((template) => <td key={template.id}>{template.temperature.toFixed(1)}</td>)}</tr>
+          <tr><th>Temperature</th>{selectedTemplates.map((template) => <td key={template.id}>{formatTemplateTemperature(template.temperature)}</td>)}</tr>
           {promptStagesByAgent[agent].map((stage) => <tr key={stage.id}><th>{stage.label}</th>{selectedTemplates.map((template) => <td key={template.id} className="expert-config-prompt">{template.prompts[stage.id]}</td>)}</tr>)}
         </tbody></table></div>
       </section>}

@@ -2,6 +2,7 @@ type OpenRouterModelRecord = {
   id: string;
   name: string;
   context_length: number;
+  supported_parameters?: string[];
   pricing?: { prompt?: string; completion?: string };
 };
 
@@ -9,7 +10,6 @@ export async function GET() {
   try {
     const url = new URL("https://openrouter.ai/api/v1/models");
     url.searchParams.set("output_modalities", "text");
-    url.searchParams.set("supported_parameters", "temperature");
     url.searchParams.set("sort", "most-popular");
 
     const response = await fetch(url, {
@@ -25,6 +25,7 @@ export async function GET() {
       id: model.id,
       name: model.name,
       contextLength: model.context_length,
+      supportsTemperature: Array.isArray(model.supported_parameters) ? model.supported_parameters.includes("temperature") : null,
       inputPricePerMillion: pricePerMillion(model.pricing?.prompt),
       outputPricePerMillion: pricePerMillion(model.pricing?.completion),
     }));

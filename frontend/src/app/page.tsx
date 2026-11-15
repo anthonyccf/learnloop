@@ -1,2 +1,3 @@
-import { LiveWorkspace } from "@/components/live-workspace";
-export default function Page() { return <LiveWorkspace view="today" />; }
+import { redirect } from "next/navigation";
+
+export default function Page() { redirect("/learn"); }

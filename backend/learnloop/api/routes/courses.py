@@ -9,7 +9,14 @@ from sqlalchemy import select
 from learnloop.agents.expert.materials import MATERIALS_VERSION, material_valid, public_materials
 from learnloop.agents.expert.organization import current_organization
 from learnloop.api.dependencies import ApiContext
-from learnloop.core.schemas import ConceptTargetUpdate, CourseCreate, CourseRename, Search
+from learnloop.core.schemas import (
+    ConceptTargetUpdate,
+    CourseCreate,
+    CourseRename,
+    Search,
+    StrictModel,
+    TopicGroup,
+)
 from learnloop.persistence.database import (
     Chunk,
     Course,
@@ -38,6 +45,11 @@ def release_summary(release):
         "createdAt": release.created_at.isoformat(),
         "conceptCount": len(release.payload["graph"]["concepts"]),
     }
+
+
+class HierarchyUpdate(StrictModel):
+    expectedReleaseId: str
+    topics: list[TopicGroup]
 
 
 def build_router(context: ApiContext):
@@ -195,6 +207,41 @@ def build_router(context: ApiContext):
                 input["organizationDraft"] = max(drafts, key=len)
             run = new_run(db, course, "course_preparation", input)
             return {"runId": run.id, "status": "queued"}
+
+    @router.post("/api/courses/{course_id}/hierarchy")
+    def update_hierarchy(course_id: str, body: HierarchyUpdate, principal=Depends(owner)):
+        from learnloop.agents.expert.organization import validate_topics
+        from learnloop.core.errors import ServiceError
+
+        with factory.begin() as db:
+            owned(db, Course, course_id, principal)
+            lock_course(db, course_id)
+            release = get_release(db, course_id)
+            if not release or release.id != body.expectedReleaseId:
+                raise HTTPException(409, "The published course changed. Refresh before saving the hierarchy.")
+            if any(run.snapshot["workflow"] == "course_preparation" and run.snapshot["status"] in ("queued", "running", "paused") for run in db.scalars(select(Run).where(Run.course_id == course_id))):
+                raise HTTPException(409, "Wait for course preparation to finish before saving the hierarchy.")
+            documents = list(db.scalars(select(Document).where(Document.course_id == course_id).with_for_update()))
+            published = {doc["id"]: doc for doc in release.payload["documents"]}
+            if len(documents) != len(published) or any(doc.id not in published or doc.graph != published[doc.id]["graph"] for doc in documents):
+                raise HTTPException(409, "Course preparation has changed. Publish it before editing the hierarchy.")
+            concepts = [concept for doc in documents for concept in doc.graph.get("concepts", [])]
+            organization = current_organization(documents, concepts)
+            if not organization:
+                raise HTTPException(409, "The course organization is unavailable or stale.")
+            topics = [topic.model_dump() for topic in body.topics]
+            try:
+                validate_topics(concepts, topics)
+                anchor = next(doc for doc in documents if doc.graph.get("organization") == organization)
+                graph = copy.deepcopy(anchor.graph)
+                graph["organization"]["topics"] = topics
+                graph["organization"]["coverage"]["topicCount"] = len(topics)
+                anchor.graph = graph
+                db.flush()
+                updated = publish_course(db, course_id)
+            except (ServiceError, ValueError) as error:
+                raise HTTPException(409, getattr(error, "message", str(error))) from error
+            return release_summary(updated)
 
     @router.get("/api/courses/{course_id}/materials")
     def learning_materials(course_id: str, releaseId: str | None = None, principal=Depends(owner)):

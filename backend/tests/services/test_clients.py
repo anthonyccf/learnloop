@@ -6,7 +6,8 @@ from pydantic import SecretStr
 
 from learnloop.core.config import get_settings
 from learnloop.core.errors import ServiceError
-from learnloop.core.schemas import Assessment, CourseRelationships
+from learnloop.core.schemas import Assessment, CourseRelationships, DocumentAnalyzeRequest
+from learnloop.runtime.workflows import PromptConfiguredServices
 from learnloop.services.clients import Services
 
 
@@ -63,6 +64,48 @@ def test_generation_uses_requested_model_strict_schema_and_rejects_truncation(
     mock_client(monkeypatch, handler)
     with pytest.raises(ServiceError, match="schema"):
         Services(settings).generate("Assessing", "Assess safely.", {}, Assessment)
+
+
+@pytest.mark.parametrize("temperature", [None, 0.2])
+def test_template_temperature_is_optional_and_only_sent_when_set(monkeypatch, temperature):
+    template = DocumentAnalyzeRequest.model_validate(
+        {
+            "promptTemplate": {
+                "id": "template-1",
+                "agent": "expert",
+                "name": "Test",
+                "prompts": {"analysis": "Analyze", "lesson": "Teach", "questions": "Ask"},
+                "model": "openai/gpt-6-luna",
+                "temperature": temperature,
+            }
+        }
+    ).promptTemplate.model_dump()
+    settings = get_settings().model_copy(update={"llm_api_key": SecretStr("test-key")})
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["model"] == "openai/gpt-6-luna"
+        if temperature is None:
+            assert "temperature" not in body
+        else:
+            assert body["temperature"] == temperature
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": '{"feedback":"Looks good", "uncertain":false}'},
+                    }
+                ]
+            },
+        )
+
+    mock_client(monkeypatch, handler)
+    result = PromptConfiguredServices(Services(settings), template).generate(
+        "Expert", "Assess safely.", {}, Assessment
+    )
+    assert result.feedback == "Looks good"
 
 
 def test_qdrant_retrieval_requires_owner_course_and_published_documents(monkeypatch):

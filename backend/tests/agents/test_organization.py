@@ -44,6 +44,24 @@ def test_full_partition_cross_section_dag_and_related_links_do_not_gate_practice
     )
 
 
+def test_nested_topics_allow_legacy_roots_and_reject_invalid_trees():
+    from learnloop.agents.expert.organization import validate_topics
+
+    topics = [
+        {"id": "root", "conceptIds": []},
+        {"id": "child", "parentId": "root", "conceptIds": ["a", "b"]},
+        {"id": "legacy", "conceptIds": ["c"]},
+    ]
+    validate_topics(catalog(), topics)
+    for patch in ({"parentId": "missing"}, {"parentId": "child"}, {"parentId": "root"}):
+        bad = copy.deepcopy(topics)
+        bad[0].update(patch)
+        with pytest.raises(ServiceError):
+            validate_topics(catalog(), bad)
+    with pytest.raises(ServiceError):
+        validate_topics(catalog(), topics + [{"id": "empty", "conceptIds": []}])
+
+
 @pytest.mark.parametrize(
     "defect",
     ["missing", "duplicate", "unknown", "cycle", "bad-source", "invented", "duplicate-related"],
@@ -231,6 +249,35 @@ def test_course_wide_upgrade_is_durable_keeps_evidence_and_reuses_completed_outp
         after = db.get(Document, uploaded["documentId"]).graph
         for key in ("concepts", "resources", "prerequisites"):
             assert after[key] == original[key]
+
+
+def test_organizer_preserves_generated_nested_topic_parents(stack):
+    from learnloop.core.schemas import TopicOrganization
+    from tests.api.test_integration import prepare
+
+    client, factory, services, _ = stack
+    course_id, upload = prepare(stack)
+    with factory.begin() as db:
+        document = db.get(Document, upload["documentId"])
+        document.graph = {key: value for key, value in document.graph.items() if key != "organization"}
+        for run in db.query(Run).filter_by(course_id=course_id):
+            run.input = {key: value for key, value in run.input.items() if key != "organizationDraft"}
+    original = services.generate
+
+    def nested(role, instruction, context, output):
+        if output is TopicOrganization:
+            return TopicOrganization(topics=[
+                {"id": "root", "title": "Course topics", "summary": "A group for course foundations.", "conceptIds": []},
+                {"id": "child", "parentId": "root", "title": "Foundations", "summary": "Source-supported basic concepts.", "conceptIds": [c["id"] for c in context["concepts"]]},
+            ])
+        return original(role, instruction, context, output)
+
+    services.generate = nested
+    receipt = client.post(f"/api/courses/{course_id}/organize", json={}).json()
+    assert work_once(factory, services)
+    assert client.get(f"/api/agent-activity/runs/{receipt['runId']}").json()["status"] == "completed"
+    topics = client.get(f"/api/courses/{course_id}").json()["graph"]["topics"]
+    assert topics[1]["parentId"] == topics[0]["id"]
 
 
 def test_new_document_organizes_all_documents_and_reviewer_can_downgrade_dependency(stack):
