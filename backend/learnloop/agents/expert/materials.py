@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy import select
 
+from learnloop.agents.expert import prompts_v2
 from learnloop.agents.expert.prompts import PYRAMID_MATERIALS_PROMPT
 from learnloop.agents.expert.questions import normalize_prompt, verify_keys
 from learnloop.agents.expert.repair import repair_citations, repair_context
@@ -14,6 +15,7 @@ from learnloop.agents.rubrics import ensure_rubric
 from learnloop.core.domain import DIFFICULTIES
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import grounding_valid, remap_sources
+from learnloop.core.prompt_versions import prompt_version, versioned
 from learnloop.core.schemas import (
     AdditionalQuestions,
     LessonScopeReview,
@@ -101,6 +103,7 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True):
         run_input = db.get(Run, run_id).input
         review_feedback = copy.deepcopy(run_input.get("materialReviewFeedback", {}))
         prompt_fingerprint = run_input.get("prompt_template_fingerprint")
+        version = prompt_version(services, "Expert")
         course_docs = list(
             db.scalars(
                 select(Document).where(
@@ -132,6 +135,7 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True):
             or resources.get(c["id"], {}).get("scopeFingerprint")
             != scope_fingerprint(resources.get(c["id"], {}).get("lesson"), curriculum.get(c["id"]))
             or resources.get(c["id"], {}).get("promptTemplateFingerprint") != prompt_fingerprint
+            or resources.get(c["id"], {}).get("promptVersion", "v1") != version
         ]
     completed = len(concepts) - len(missing)
 
@@ -143,6 +147,7 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True):
             saved
             and saved.get("version") == MATERIALS_VERSION
             and saved.get("promptTemplateFingerprint") == prompt_fingerprint
+            and saved.get("promptVersion", "v1") == version
             and not feedback
         ):
             content = copy.deepcopy(material_content(saved))
@@ -185,7 +190,8 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True):
                 "Use only supplied passages and their exact alias IDs. Remove unsupported claims; do not preserve "
                 "faulty citations or tests. Never invent evidence or fill gaps with outside knowledge."
             )
-        output = services.generate("Expert", PYRAMID_MATERIALS_PROMPT, payload, PyramidMaterials)
+        prompt = versioned(services, "Expert", PYRAMID_MATERIALS_PROMPT, prompts_v2.PYRAMID_MATERIALS_PROMPT)
+        output = services.generate("Expert", prompt, payload, PyramidMaterials)
         output = PyramidMaterials.model_validate(remap_sources(output, original_ids))
         result = {
             "lesson": output.lesson.as_lesson(),
@@ -193,6 +199,8 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True):
         }
         if prompt_fingerprint:
             result["promptTemplateFingerprint"] = prompt_fingerprint
+        if version != "v1":
+            result["promptVersion"] = version
         return result
 
     def generate(concept):

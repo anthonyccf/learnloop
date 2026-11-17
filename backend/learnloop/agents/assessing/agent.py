@@ -9,6 +9,7 @@ import copy
 
 from sqlalchemy import select
 
+from learnloop.agents.assessing import prompts_v2
 from learnloop.agents.assessing.mixed_answers import assess_mixed
 from learnloop.agents.assessing.prompts import FEEDBACK_PROMPT
 from learnloop.agents.question_review import question_review_valid, review_question
@@ -16,6 +17,7 @@ from learnloop.agents.rubrics import ensure_rubric, validate_assessment
 from learnloop.core.domain import WEAKNESS_FAILURE_THRESHOLD, assess_evidence, effective_state
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import source_ids
+from learnloop.core.prompt_versions import versioned
 from learnloop.core.question_formats import parse_question
 from learnloop.core.schemas import Assessment, MultipleAnswerQuestion, Question
 from learnloop.persistence.database import (
@@ -169,7 +171,8 @@ def run(factory, services, run_id):
         context["rubric"] = [c.model_dump() for c in rubric_question.rubric]
         context["referenceAnswer"] = rubric_question.referenceAnswer
         if isinstance(rubric_question, Question):
-            output = services.generate("Assessing", FEEDBACK_PROMPT, context, Assessment)
+            prompt = versioned(services, "Assessing", FEEDBACK_PROMPT, prompts_v2.FEEDBACK_PROMPT)
+            output = services.generate("Assessing", prompt, context, Assessment)
             coverage, score = validate_assessment(rubric_question, output, submission.choice_id, reasoning)
         else:
             if not typed_answer:

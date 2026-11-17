@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 // Only expose the local single-owner API's public projections.
 const routes = [
+  /^agent-templates(?:\/(?:save|delete|builtin-prompts))?$/,
   /^courses(?:\/[^/]+(?:\/(?:documents|rename|materials|organize|learner-state|sessions|search|runs|assessments))?)?$/,
   /^courses\/[^/]+\/plan(?:\/revise)?$/,
   /^courses\/[^/]+\/concepts\/[^/]+\/target$/,
@@ -12,6 +13,8 @@ const routes = [
   /^submissions\/[^/]+$/,
   /^agent-activity\/runs\/[^/]+(?:\/(?:commands|events|evaluation))?$/,
   /^workbench\/courses\/[^/]+\/memories$/,
+  /^evaluations(?:\/(?:bundles|runs|setups|learners|pseudo-runs)(?:\/[a-f0-9]{32})?)?$/,
+  /^evaluations\/pseudo-runs\/[a-f0-9]{32}\/retry$/,
   /^workbench\/memories\/[^/]+(?:\/(?:start|answer|retry|clear|chat))?$/,
 ];
 

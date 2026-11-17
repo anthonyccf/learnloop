@@ -9,6 +9,8 @@ from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import select
 
 from learnloop.persistence.database import (
+    AgentTemplate,
+    AgentTemplateDefault,
     Chunk,
     ChunkEmbedding,
     Document,
@@ -27,7 +29,18 @@ VALIDATORS = {
 ROLES = ("expert", "tutoring", "assessing")
 
 
+def default_template(db, owner_id, agent):
+    default = db.get(AgentTemplateDefault, (owner_id, agent))
+    template = db.get(AgentTemplate, default.template_id) if default else None
+    return copy.deepcopy(template.data) if template and template.owner_id == owner_id and template.agent == agent else None
+
+
 def new_run(db, course, workflow: str, inputs: dict, concept_id=None):
+    agent = {"course_preparation": "expert", "next_activity": "tutor", "assessment": "assessing"}.get(workflow)
+    if agent and not inputs.get("prompt_template"):
+        template = default_template(db, course.owner_id, agent)
+        if template:
+            inputs = {**inputs, "prompt_template": template}
     run_id = uid()
     snapshot = {
         "schemaVersion": 1,

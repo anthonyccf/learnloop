@@ -73,7 +73,13 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
   if (response.status === 409 && data?.detail?.code === "unmet_prerequisites") {
     throw new PrerequisiteBlockedError(data.detail);
   }
-  if (!response.ok) throw new Error(typeof data?.detail === "string" ? data.detail : `Request failed (${response.status}). Please refresh and retry.`);
+  if (!response.ok) {
+    const validation = Array.isArray(data?.detail) ? data.detail.map((item: { loc?: unknown[]; msg?: string }) => {
+      const field = (item.loc || []).filter((part) => part !== "body").join(".");
+      return item.msg ? `${field ? `${field}: ` : ""}${item.msg}` : "";
+    }).filter(Boolean).join("; ") : "";
+    throw new Error(typeof data?.detail === "string" ? data.detail : validation || `Request failed (${response.status}). Please refresh and retry.`);
+  }
   if (data == null) throw new Error("The learning server returned an unreadable response. Please refresh and retry.");
   return data as T;
 }

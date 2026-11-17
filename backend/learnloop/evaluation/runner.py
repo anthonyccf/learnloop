@@ -75,13 +75,15 @@ def run_episode(
     root,
     *,
     mode="research",
+    student_spec=None,
 ):
     concepts = artifact["graph"]["concepts"]
+    versions = variants.get("promptVersions", {})
     if provider.offline:
         provider.max_calls = config.maxCalls
     wall_started = time.perf_counter()
     at = datetime(2030, 1, 1, tzinfo=UTC)
-    student = Student(concepts, profile, config.seed, repeat)
+    student = Student(concepts, profile, config.seed, repeat, student_spec)
     identity = {
         "variants": variants,
         "profile": profile,
@@ -93,8 +95,9 @@ def run_episode(
         "examHash": digest(bank),
         "mode": mode,
         "runtimeHash": runtime_hash(),
+        "studentSpec": student_spec,
         "prompts": {
-            role: instruction(role, variants[key])
+            role: instruction(role, variants[key], versions.get(key, "v1"))
             for role, key in [
                 ("Expert", "expert"),
                 ("Tutoring", "tutor"),
@@ -115,7 +118,11 @@ def run_episode(
     }
     result = {
         "id": digest(identity),
-        "configurationId": "-".join(variants.values()) + "-" + baseline,
+        "configurationId": "-".join(
+            [variants["expert"], variants["tutor"], variants["assessor"]]
+            + [f"{key}-{version}" for key, version in sorted(versions.items())]
+            + [baseline]
+        ),
         "variants": variants,
         "profile": profile,
         "repeat": repeat,
@@ -175,7 +182,7 @@ def run_episode(
                 # Identical fields and tools across Tutor prompts; no hidden profile/post-test input.
                 choice = provider.generate(
                     "Tutoring",
-                    instruction("Tutoring", variants["tutor"]),
+                    instruction("Tutoring", variants["tutor"], versions.get("tutor", "v1")),
                     {
                         "goal": {
                             "description": "Develop independent understanding of this course unit."
@@ -240,7 +247,10 @@ def run_episode(
                 ],
             }
             assessed = provider.generate(
-                "Assessing", instruction("Assessing", variants["assessor"]), context, Assessment
+                "Assessing",
+                instruction("Assessing", variants["assessor"], versions.get("assessor", "v1")),
+                context,
+                Assessment,
             )
             coverage, score = validate_assessment(
                 question, assessed, reply.choiceId, reply.reasoning

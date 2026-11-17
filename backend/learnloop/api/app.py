@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 
 from learnloop.api.dependencies import ApiContext
-from learnloop.api.routes import activity, assessments, courses, documents, health, plans, sessions, workbench_tutor
+from learnloop.api.routes import activity, assessments, courses, documents, evaluations, health, plans, sessions, templates, workbench_tutor
 from learnloop.core.config import get_settings
 from learnloop.core.errors import ServiceError
 from learnloop.persistence.database import (
@@ -72,6 +72,6 @@ def create_app(settings=None, factory=None, services=None):
             return Response("Request body is too large.", status_code=413)
         return await call_next(request)
 
-    for routes in (health, courses, documents, sessions, assessments, activity, plans, workbench_tutor):
+    for routes in (health, courses, documents, sessions, assessments, activity, plans, templates, workbench_tutor, evaluations):
         app.include_router(routes.build_router(context))
     return app

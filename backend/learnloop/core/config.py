@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=1800, ge=300)
     worker_max_attempts: int = Field(default=6, ge=1, le=10)
     expert_material_workers: int = Field(default=6, ge=1, le=12)
+    prompt_version: Literal["v1", "v2"] = Field(default="v1", validation_alias="PROMPT_VERSION")
 
     @field_validator("database_url", mode="after")
     @classmethod

@@ -24,9 +24,9 @@ class DocumentRename(StrictModel):
 
 
 class ExpertPromptStages(StrictModel):
-    analysis: str = Field(min_length=1, max_length=20000)
-    lesson: str = Field(min_length=1, max_length=20000)
-    questions: str = Field(min_length=1, max_length=20000)
+    analysis: str = Field(max_length=20000)
+    lesson: str = Field(max_length=20000)
+    questions: str = Field(max_length=20000)
 
 
 class ExpertPromptTemplate(StrictModel):
@@ -37,6 +37,7 @@ class ExpertPromptTemplate(StrictModel):
     enabledTools: list[str] = Field(default_factory=list, max_length=16)
     model: str = Field(min_length=1, max_length=200)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    basePrompts: Literal["v1", "v2"] = "v1"
 
 
 class DocumentAnalyzeRequest(StrictModel):

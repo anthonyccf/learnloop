@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 from sqlalchemy import func, select
 
+from learnloop.agents.tutoring import prompts_v2
 from learnloop.agents.tutoring.chat import CHAT_PROMPT
 from learnloop.agents.tutoring.workbench import lesson_for
 from learnloop.core.domain import (
@@ -19,6 +20,7 @@ from learnloop.core.domain import (
     target_difficulty,
 )
 from learnloop.core.planning import candidates
+from learnloop.core.prompt_versions import versioned
 from learnloop.core.schemas import (
     ExpertPromptStages,
     StrictModel,
@@ -60,6 +62,7 @@ class TutorTemplate(StrictModel):
     enabledTools: list[str] = Field(default_factory=list, max_length=16)
     model: str = Field(min_length=1, max_length=200)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    basePrompts: Literal["v1", "v2"] = "v1"
 
 
 class Start(StrictModel):
@@ -555,11 +558,12 @@ def build_router(context):
             activity_id, activity_status = (activity.id, activity.status) if activity else (None, None)
             history_snapshot = list(prior)
             sources = material.get("sourcesByDifficulty", {}).get(level, material["sources"])
-            template = memory.data.get("promptTemplate")
+            from learnloop.runtime.events import default_template
+            template = memory.data.get("promptTemplate") or default_template(db, principal, "tutor")
         recorder = UsageRecorder()
         chat_services = PromptConfiguredServices(MeteredServices(context.services, recorder), template)
         response = chat_services.generate(
-            "Tutoring", CHAT_PROMPT + "\nAlso choose nextAction: lesson, quiz, or none. "
+            "Tutoring", versioned(chat_services, "Tutoring", CHAT_PROMPT, prompts_v2.CHAT_PROMPT) + "\nAlso choose nextAction: lesson, quiz, or none. "
             "Suggest a lesson when more explanation is needed and a quiz when practice is appropriate. "
             "The current unanswered quiz stays visible until answered or cleared.",
             context_data, WorkbenchTutorReply,

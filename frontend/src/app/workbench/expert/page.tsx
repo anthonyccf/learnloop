@@ -6,8 +6,9 @@ import { api } from "@/lib/backend";
 import { useWorkspace } from "@/components/workspace-provider";
 import { ExpertWorkbenchShell } from "@/components/expert-workbench-shell";
 import { ExpertTutorHandoffs } from "@/components/expert-tutor-handoffs";
+import { InspectorPreview } from "@/components/inspector-preview";
 import { ExpertHierarchyReview } from "@/components/expert-hierarchy-review";
-import { formatTemplateTemperature, readExpertTemplates, type AgentPromptTemplate } from "@/lib/expert-templates";
+import { formatTemplateTemperature, loadSharedTemplates, type AgentPromptTemplate } from "@/lib/expert-templates";
 
 type InspectionKind = "source_chunks" | "concepts" | "lessons" | "questions" | "embeddings";
 type InspectionRow = Record<string, unknown>;
@@ -36,6 +37,7 @@ type Inspection = {
 };
 type Relationship = {
   selected: { kind: InspectionKind; id: string; title: string };
+  preview?: Record<string, unknown> | null;
   pageContent?: { page: number; chunks: { id: string; ordinal: number; text: string }[] } | null;
   sourceChunks: { id: string; page: number; ordinal: number; text: string; embedded: boolean }[];
   concepts: { id: string; title: string; summary: string; sourceChunkIds: string[] }[];
@@ -262,13 +264,13 @@ export default function ExpertWorkbenchPage() {
   }, [runDetail?.events?.length, showAllActivity]);
 
   useEffect(() => {
-    const refreshTemplates = () => {
-      const templates = readExpertTemplates().filter((template) => template.agent === "expert");
+    const refreshTemplates = async () => {
+      const templates = (await loadSharedTemplates()).filter((template) => template.agent === "expert");
       setRunTemplates(templates);
       let saved = "";
       try { saved = localStorage.getItem(RUN_TEMPLATE_STORAGE_KEY) || ""; } catch {}
       setSelectedTemplateId((current) => {
-        const preferred = current || saved;
+        const preferred = current || templates.find(template => template.isDefault)?.id || saved || "";
         if (preferred && templates.some((template) => template.id === preferred)) return preferred;
         try { localStorage.removeItem(RUN_TEMPLATE_STORAGE_KEY); } catch {}
         return "";
@@ -316,6 +318,7 @@ export default function ExpertWorkbenchPage() {
             enabledTools: selectedRunTemplate.enabledTools,
             model: selectedRunTemplate.model,
             temperature: selectedRunTemplate.temperature,
+            basePrompts: selectedRunTemplate.basePrompts ?? "v1",
           } : null,
         });
         if (document.id === activeDocumentId && receipt.runId) {
@@ -503,7 +506,7 @@ export default function ExpertWorkbenchPage() {
       <h2>Run with template</h2>
       <label className={`expert-run-template-option ${!selectedTemplateId ? "selected" : ""}`}>
         <input type="radio" name="expert-run-template" checked={!selectedTemplateId} onChange={() => chooseRunTemplate("")} />
-        <span><strong>Backend defaults</strong><small>Use configured prompts and model</small></span>
+        <span><strong>Agent default</strong><small>Use the shared default, or configured settings if none is set</small></span>
       </label>
       {runTemplates.map((template) => <label key={template.id} className={`expert-run-template-option ${selectedTemplateId === template.id ? "selected" : ""}`}>
         <input type="radio" name="expert-run-template" checked={selectedTemplateId === template.id} onChange={() => chooseRunTemplate(template.id)} />
@@ -559,7 +562,7 @@ export default function ExpertWorkbenchPage() {
               </li>)}</ul>}
             </div>}
             <div className="expert-run-actions">
-              <div><strong>{selectedRunTemplate?.name || "Backend defaults"}</strong><span>{ws.materialId ? selectedDocument?.filename || "Selected material" : `${runTargets.length} materials · all course materials`}</span><small>The selected template applies to the next Expert run. Results are validated and saved to the course.</small></div>
+              <div><strong>{selectedRunTemplate?.name || "Agent default"}</strong><span>{ws.materialId ? selectedDocument?.filename || "Selected material" : `${runTargets.length} materials · all course materials`}</span><small>The selected template applies to the next Expert run. Results are validated and saved to the course.</small></div>
               <button type="button" className="expert-button primary" disabled={!runnableTargets.length || startingRuns || busy} onClick={() => void runSelectedMaterials()}>{runButtonLabel}</button>
             </div>
             {runTargets.length > runnableTargets.length && <p className="expert-help-note">Materials already being processed are skipped.</p>}
@@ -686,6 +689,7 @@ export default function ExpertWorkbenchPage() {
       </div>}
       {relationshipOpen && <dialog ref={relationshipDialog} className={`expert-relationship-dialog ${relationship?.pageContent ? "with-source-page" : ""}`} aria-labelledby="expert-relationship-title" onCancel={() => setRelationshipOpen(false)} onClick={(event) => { if (event.target === event.currentTarget) setRelationshipOpen(false); }}>
         <header className="expert-relationship-header"><div><p className="expert-eyebrow">DATABASE RELATIONSHIPS</p><h2 id="expert-relationship-title">{relationship?.selected.title || "Loading record relationships…"}</h2>{relationship && <p><span className="expert-status-tag indexed">{readable(relationship.selected.kind)}</span><span className="expert-relationship-id">{relationship.selected.id}</span></p>}</div><button type="button" className="expert-dialog-close" aria-label="Close relationship view" onClick={() => setRelationshipOpen(false)}>×</button></header>
+        {relationship?.preview && (relationship.selected.kind === "lessons" || relationship.selected.kind === "questions") && <InspectorPreview kind={relationship.selected.kind} content={relationship.preview} />}
         <p className="expert-relationship-intro">Follow the stored provenance from source passages to concepts and the lessons or questions built for each concept. Click a related record to open its relationship view.</p>
         {relationship?.selected.kind === "source_chunks" && relationship.pageContent && <section className="expert-source-page-content" aria-label={`Extracted content from page ${relationship.pageContent.page}`}>
           <header><div><h3>Page content</h3><span>Page {relationship.pageContent.page} · {relationship.pageContent.chunks.length} passage{relationship.pageContent.chunks.length === 1 ? "" : "s"}</span></div><span className="expert-readonly-tag">Read only</span></header>

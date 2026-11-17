@@ -41,9 +41,9 @@ LEVELS = ("basic", "intermediate", "advanced")
 
 
 class Student:
-    def __init__(self, concepts, profile, seed, repeat):
+    def __init__(self, concepts, profile, seed, repeat, spec=None):
         self.profile, self.seed, self.repeat = profile, seed, repeat
-        self.spec = copy.deepcopy(PROFILES[profile])
+        self.spec = copy.deepcopy(spec if spec is not None else PROFILES[profile])
         self.knowledge = {c["id"]: dict(zip(LEVELS, self.spec["ability"])) for c in concepts}
         self.memory = {}
         self.policies = []

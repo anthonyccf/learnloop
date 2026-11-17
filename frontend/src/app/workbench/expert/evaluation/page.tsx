@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ExpertWorkbenchShell } from "@/components/expert-workbench-shell";
 import { api } from "@/lib/backend";
 import { useWorkspace } from "@/components/workspace-provider";
-import { formatTemplateTemperature, promptStagesByAgent, readExpertTemplates, workbenchAgents, type AgentPromptTemplate, type WorkbenchAgent } from "@/lib/expert-templates";
+import { formatTemplateTemperature, promptStagesByAgent, loadSharedTemplates, workbenchAgents, type AgentPromptTemplate, type WorkbenchAgent } from "@/lib/expert-templates";
 
 type Evaluation = { runId: string; snapshotAvailable: boolean; elapsedSeconds: number | null; retriesUsed: number | null; concepts: number | null; conceptsWithSourceLinks: number | null; processedPassages: number | null; totalPassages: number | null; reviewPassRate: null; cost: null };
 
@@ -21,8 +21,8 @@ export default function ExpertEvaluationPage() {
   const [copyError, setCopyError] = useState("");
 
   useEffect(() => {
-    const refresh = () => {
-      const next = readExpertTemplates();
+    const refresh = async () => {
+      const next = await loadSharedTemplates();
       setTemplates(next);
       setSelectedIds((current) => current.filter((id) => next.some((template) => template.id === id)));
     };
@@ -145,6 +145,7 @@ export default function ExpertEvaluationPage() {
       {selectedTemplates.length > 0 && <section className="expert-card expert-config-comparison" aria-labelledby="expert-config-comparison-title">
         <div className="expert-card-heading"><div><h2 id="expert-config-comparison-title">Configuration comparison</h2><p>Inspect the selected prompt and model settings side by side.</p></div></div>
         <div className="expert-config-table-wrap"><table className="expert-config-table"><thead><tr><th>Setting</th>{selectedTemplates.map((template) => <th key={template.id}>{template.name}</th>)}</tr></thead><tbody>
+          <tr><th>Base prompts</th>{selectedTemplates.map((template) => <td key={template.id}>{template.basePrompts ?? "v1"}</td>)}</tr>
           <tr><th>Model</th>{selectedTemplates.map((template) => <td key={template.id}>{template.model}</td>)}</tr>
           <tr><th>Temperature</th>{selectedTemplates.map((template) => <td key={template.id}>{formatTemplateTemperature(template.temperature)}</td>)}</tr>
           {promptStagesByAgent[agent].map((stage) => <tr key={stage.id}><th>{stage.label}</th>{selectedTemplates.map((template) => <td key={template.id} className="expert-config-prompt">{template.prompts[stage.id]}</td>)}</tr>)}

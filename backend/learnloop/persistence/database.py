@@ -75,6 +75,21 @@ class Course(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=now)
 
 
+class AgentTemplate(Base):
+    __tablename__ = "ll_agent_templates"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(100), index=True)
+    agent: Mapped[str] = mapped_column(String(20))
+    data: Mapped[dict] = mapped_column(JSON)
+
+
+class AgentTemplateDefault(Base):
+    __tablename__ = "ll_agent_template_defaults"
+    owner_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    agent: Mapped[str] = mapped_column(String(20), primary_key=True)
+    template_id: Mapped[str] = mapped_column(ForeignKey("ll_agent_templates.id"))
+
+
 class Document(Base):
     __tablename__ = "ll_documents"
     __table_args__ = (UniqueConstraint("course_id", "sha256"),)

@@ -6,6 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from learnloop.agents.expert.materials import public_materials
+from learnloop.agents.tutoring import prompts_v2
+from learnloop.core.prompt_versions import versioned
 from learnloop.core.schemas import TutorChatReply
 from learnloop.persistence.database import Activity, Course, StudySession
 from learnloop.persistence.learner_memory import learner_memory, record_tutor_observation
@@ -101,7 +103,8 @@ def answer_chat(factory, services, session_id, owner_id, body):
         }
 
     # No database transaction stays open during the model request.
-    reply = services.generate("Tutoring", CHAT_PROMPT, context, TutorChatReply)
+    prompt = versioned(services, "Tutoring", CHAT_PROMPT, prompts_v2.CHAT_PROMPT)
+    reply = services.generate("Tutoring", prompt, context, TutorChatReply)
     with factory.begin() as db:
         db.scalar(select(Course).where(Course.id == course_id).with_for_update())
         session = db.get(StudySession, session_id)

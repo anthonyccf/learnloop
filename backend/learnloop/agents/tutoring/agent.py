@@ -13,6 +13,7 @@ from learnloop.agents.expert.questions import generate_question, saved_question
 from learnloop.agents.grounding import review_grounding
 from learnloop.agents.references import refs
 from learnloop.agents.rubrics import ensure_rubric
+from learnloop.agents.tutoring import prompts_v2
 from learnloop.agents.tutoring.prompts import PLAN_PROMPT
 from learnloop.core.domain import prerequisite_block, select_concept, target_difficulty
 from learnloop.core.errors import ServiceError
@@ -21,6 +22,7 @@ from learnloop.core.grounding import (
     source_ids,
 )
 from learnloop.core.planning import candidates
+from learnloop.core.prompt_versions import versioned
 from learnloop.core.question_formats import public_prompt
 from learnloop.core.question_formats import parse_question
 from learnloop.core.schemas import PlanChoice, Question
@@ -164,7 +166,7 @@ def run(factory, services, run_id):
     offered = options[:12]
     choice = services.generate(
         "Tutoring",
-        PLAN_PROMPT,
+        versioned(services, "Tutoring", PLAN_PROMPT, prompts_v2.PLAN_PROMPT),
         {
             "goal": goal,
             **({"learningRequest": learning_request} if learning_request else {}),

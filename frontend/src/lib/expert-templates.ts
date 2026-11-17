@@ -1,5 +1,11 @@
 export type WorkbenchAgent = "expert" | "tutor" | "assessing";
 export type ExpertPromptStage = "analysis" | "lesson" | "questions";
+export type BasePromptVersion = "v1" | "v2";
+
+export const basePromptVersions: { id: BasePromptVersion; label: string; description: string }[] = [
+  { id: "v1", label: "v1 · original", description: "The original built-in backend prompts." },
+  { id: "v2", label: "v2 · revised", description: "Revised built-in prompts with field glossaries, stricter answer-leak and evidence rules, and shared difficulty definitions." },
+];
 
 export const workbenchAgents: { id: WorkbenchAgent; label: string }[] = [
   { id: "expert", label: "Expert" },
@@ -33,8 +39,10 @@ export type AgentPromptTemplate = {
   enabledTools: string[];
   model: string;
   temperature: number | null;
+  basePrompts?: BasePromptVersion;
   createdAt: string;
   updatedAt: string;
+  isDefault?: boolean;
 };
 
 export type OpenRouterModel = {
@@ -117,6 +125,57 @@ export function readExpertTemplates(): AgentPromptTemplate[] {
 
 export function writeExpertTemplates(templates: AgentPromptTemplate[]) {
   window.localStorage.setItem(EXPERT_TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
+  window.dispatchEvent(new CustomEvent("learnloop-expert-templates-updated"));
+}
+
+// Import once per browser and origin. Keep the original data as a recovery copy.
+export async function loadSharedTemplates(): Promise<AgentPromptTemplate[]> {
+  const { api } = await import("@/lib/backend");
+  const marker = "learnloop-agent-templates-imported-v1";
+  if (!window.localStorage.getItem(marker)) {
+    for (const template of readExpertTemplates()) {
+      await api("agent-templates/save", { template: { ...template, isDefault: false }, importOnly: true });
+    }
+    window.localStorage.setItem(marker, "1");
+  }
+  const templates = await api<AgentPromptTemplate[]>("agent-templates");
+  // Created once, under a fixed id, so a deleted v2 template stays deleted and
+  // overlapping page loads cannot insert another copy.
+  const v2Marker = "learnloop-v2-prompt-templates-created-v1";
+  if (window.localStorage.getItem(v2Marker)) return templates;
+  const missing = workbenchAgents.filter(({ id }) => !templates.some((template) => template.id === `builtin-v2-${id}`));
+  const now = new Date().toISOString();
+  for (const { id, label } of missing) {
+    await api("agent-templates/save", {
+      template: {
+        id: `builtin-v2-${id}`,
+        agent: id,
+        name: `${label} v2 prompts`,
+        prompts: { analysis: "", lesson: "", questions: "" },
+        enabledTools: defaultEnabledToolsByAgent[id],
+        model: "configured",
+        temperature: null,
+        basePrompts: "v2",
+        createdAt: now,
+        updatedAt: now,
+        isDefault: false,
+      },
+      importOnly: true,
+    });
+  }
+  window.localStorage.setItem(v2Marker, "1");
+  return missing.length ? api<AgentPromptTemplate[]>("agent-templates") : templates;
+}
+
+export async function saveSharedTemplate(template: AgentPromptTemplate) {
+  const { api } = await import("@/lib/backend");
+  await api("agent-templates/save", { template });
+  window.dispatchEvent(new CustomEvent("learnloop-expert-templates-updated"));
+}
+
+export async function deleteSharedTemplate(id: string) {
+  const { api } = await import("@/lib/backend");
+  await api("agent-templates/delete", { id });
   window.dispatchEvent(new CustomEvent("learnloop-expert-templates-updated"));
 }
 

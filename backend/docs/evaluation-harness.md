@@ -1,5 +1,69 @@
 # Controlled evaluation harness
 
+## Workbench controls
+
+The Workbench's separate **Pseudo-student tests** page captures a setup when a
+test starts, containing the selected published course release, material and
+copies of selected shared templates and simulated learner profiles. Custom learner profiles include a
+response-model ID and the simulator's ability, hint, gain, timing and
+misconception parameters. Saved setups can start exploratory tests that prepare
+independent exams and teaching resources for selected concepts, then
+run the selected profiles and optional baselines. Tutor testing can instead
+reuse the frozen lessons, practice questions and held-out exams from a prior
+exploratory run of the same material and published course version. This skips
+Expert and test-author calls; the Tutor and Assessing templates and learners
+come from the newly selected setup. The Expert template in that setup does not
+change the reused materials. Expert lesson/question,
+Tutor planning and Assessing stages use the captured templates and model
+settings; Expert analysis has already happened in the published release. These
+exploratory tests are not human-reviewed research and do not establish human
+learning outcomes. Prerequisites outside the selected subset are omitted.
+For all-material setups, concepts are selected round-robin from the published
+materials and at least one source-backed concept per material is required. The
+chosen concept limit can still leave other concepts untested; the run records a
+scope warning. Prepared content can only be reused for exactly the same material
+scope and immutable course release.
+The evaluation provider retries transient transport failures and HTTP 408, 425,
+429, 500, 502, 503 and 504 responses up to three times after the initial
+request, with exponential backoff. Retries use the same request and count
+against call/token limits. When a request disconnects after the provider may
+have processed it, usage and cost are marked incomplete because the provider
+did not return reliable accounting for that attempt. Retry attempts and their
+error types are recorded in the per-call ledger; response bodies are not.
+Artifacts are stored under `backend/data/pseudo-runs/` and include private test
+keys. Preparation is capped at 80 calls and 400,000 tokens per requested concept;
+each learner/condition episode is capped at 64 calls and 250,000 tokens. The
+prepared research bundle continues to use its four fixed profiles and configured
+model. The separately retained research page exposes the prepared
+`comp7608b-inference-v2-draft` bundle, its live readiness blockers, predefined
+prompt variants, episode limits, and optional fixed-sequence and memory-free
+baselines. A research run uses all four profiles. Starting it dispatches a
+separate local process; run artifacts and process logs are stored under
+`backend/data/evaluation-workbench/`, isolated by local owner. Restart the API
+after installing this route. The page displays completed summary results and
+live per-learner progress from completed activity checkpoints; it does not
+modify learner records. It counts activities, not UI clicks. The first
+`demonstrated` transition is a Tutor estimate for a concept and difficulty,
+not independently verified mastery. The final post-test target is verified
+only at the end, so its activity count is not an estimate of the earliest time
+the learner could have reached the target. The progress projection excludes
+hidden simulator state, held-out questions and answers.
+
+The UI does not yet edit bundles, inspect or record human reviews, cancel or
+resume a run, or show detailed traces.
+After an exploratory run finishes, a failed or budget-stopped learner episode
+can be retried individually from the beginning, up to three total attempts.
+Each attempt retains separate artifacts and usage; completed learners are not
+rerun. A retry requires the original frozen inputs, evaluation runtime hash and
+backend default model to match. It uses the same seed, although hosted model
+outputs are not guaranteed deterministic. The original run summary remains
+unchanged and retry results are displayed separately. If a retry process is
+forcibly terminated, inspect its artifacts and `retry.lock` before recovery.
+Use the review packet and CLI commands below for review. Runs are paid model
+calls, and call/token limits are per episode, not whole-experiment limits.
+If a process is forcibly terminated, inspect its local process log and artifacts;
+its displayed status may remain `starting` or `running`.
+
 Implemented for proposal gap 6. The package is `learnloop/evaluation/`; it uses files in explicit experiment directories and never writes to application SQL or Qdrant. Only `export-unit` opens SQL, in a read-only transaction. No API migration, worker restart or course reset is needed.
 
 ## What is implemented

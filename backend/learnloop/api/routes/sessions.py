@@ -160,7 +160,11 @@ def build_router(context: ApiContext):
 
     @router.post("/api/sessions/{session_id}/chat")
     def tutor_chat(session_id: str, body: TutorChatRequest, principal=Depends(owner)):
-        return answer_chat(factory, services, session_id, principal, body)
+        from learnloop.runtime.events import default_template
+        from learnloop.runtime.workflows import PromptConfiguredServices
+        with factory() as db:
+            template = default_template(db, principal, "tutor")
+        return answer_chat(factory, PromptConfiguredServices(services, template), session_id, principal, body)
 
     @router.post("/api/sessions/{session_id}/end")
     def end_session(session_id: str, principal=Depends(owner)):

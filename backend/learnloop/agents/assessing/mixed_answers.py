@@ -1,6 +1,8 @@
 """Grade typed responses while leaving mastery decisions to the evidence rules."""
 
+from learnloop.agents.assessing import prompts_v2
 from learnloop.core.errors import ServiceError
+from learnloop.core.prompt_versions import versioned
 from learnloop.core.question_formats import blank_matches
 from learnloop.core.schemas import Assessment, FillInQuestion, MultipleAnswerQuestion, StrictModel
 
@@ -54,7 +56,7 @@ def assess_mixed(services, question, context, answer):
             bool(rejected)
             and services.generate(
                 "Assessing",
-                BLANK_EQUIVALENCE_PROMPT,
+                versioned(services, "Assessing", BLANK_EQUIVALENCE_PROMPT, prompts_v2.BLANK_EQUIVALENCE_PROMPT),
                 {
                     "question": question.prompt,
                     "passages": context["passages"],
@@ -77,7 +79,7 @@ def assess_mixed(services, question, context, answer):
         response = answer["answerText"]
         output = services.generate(
             "Assessing",
-            OPEN_FEEDBACK_PROMPT,
+            versioned(services, "Assessing", OPEN_FEEDBACK_PROMPT, prompts_v2.OPEN_FEEDBACK_PROMPT),
             {**context, "answerText": response},
             Assessment,
         )

@@ -15,6 +15,7 @@ from learnloop.agents.expert.materials import (
     starter_complete,
 )
 from learnloop.api.dependencies import ApiContext
+from learnloop.core.prompt_versions import prompt_version
 from learnloop.core.schemas import DocumentAnalyzeRequest, DocumentRename
 from learnloop.persistence.database import (
     Chunk,
@@ -76,7 +77,7 @@ def build_router(context: ApiContext):
                 },
             )
             if prompt_template or force:
-                template_payload = prompt_template.model_dump() if prompt_template else None
+                template_payload = prompt_template.model_dump() if prompt_template else run.input.get("prompt_template")
                 fingerprint_input = {"template": template_payload, "run_id": run.id}
                 fingerprint = hashlib.sha256(
                     json.dumps(fingerprint_input, sort_keys=True, separators=(",", ":")).encode()
@@ -112,6 +113,8 @@ def build_router(context: ApiContext):
                     == MATERIALS_VERSION
                     and material_valid(doc.graph.get("resources", {}).get(c["id"]), chunks)
                     and starter_complete(doc.graph.get("resources", {}).get(c["id"]))
+                    and doc.graph["resources"][c["id"]].get("promptVersion", "v1")
+                    == prompt_version(context.services, "Expert")
                     and doc.graph["resources"][c["id"]].get("scopeFingerprint")
                     == scope_fingerprint(
                         doc.graph["resources"][c["id"]]["lesson"],
@@ -415,8 +418,7 @@ def build_router(context: ApiContext):
             relationship = None
             page_content = None
             if record_id:
-                if changed is not None and record_id not in changed[kind]:
-                    raise HTTPException(404, "The selected record was not changed in this run.")
+                # Changes filter the list, but linked records remain inspectable in this snapshot.
                 selected_concept_ids = set()
                 selected_title = record_id
                 selected_question = None
@@ -556,6 +558,7 @@ def build_router(context: ApiContext):
                 relationship = {
                     "selected": {"kind": kind, "id": record_id, "title": selected_title},
                     "pageContent": page_content,
+                    "preview": selected_lesson or selected_question,
                     "sourceChunks": [
                         {
                             "id": chunk.id,

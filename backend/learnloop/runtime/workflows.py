@@ -44,6 +44,14 @@ class PromptConfiguredServices:
     def __getattr__(self, name):
         return getattr(self._services, name)
 
+    def template_prompt_version(self, role):
+        template = self._template or {}
+        agent = template.get("agent")
+        matches = (agent in (None, "expert") and role == "Expert") or (
+            {"tutor": "Tutoring", "assessing": "Assessing"}.get(agent) == role
+        )
+        return template.get("basePrompts") if self._template and matches else None
+
     def generate(self, role, instruction, context, output):
         if self._retry_feedback and role == "Expert":
             context = dict(context)
@@ -56,7 +64,7 @@ class PromptConfiguredServices:
                 + json.dumps(self._retry_feedback, ensure_ascii=False)
             )
         template = self._template or {}
-        if role == "Expert" and template.get("agent") != "tutor":
+        if role == "Expert" and template.get("agent") in (None, "expert"):
             prompts = template.get("prompts", {})
             additions = [
                 prompts.get(stage, "").strip()
@@ -73,15 +81,20 @@ class PromptConfiguredServices:
             addition = template.get("prompts", {}).get("analysis", "").strip()
             if addition:
                 instruction += "\n\nAdditional Tutor planning instructions:\n" + addition
-        if role == "Tutoring" and template.get("agent") == "tutor" and output.__name__ == "WorkbenchTutorReply":
+        if role == "Tutoring" and template.get("agent") == "tutor" and output.__name__ in ("WorkbenchTutorReply", "TutorChatReply"):
             addition = template.get("prompts", {}).get("lesson", "").strip()
             if addition:
                 instruction += "\n\nAdditional Tutor response instructions:\n" + addition
-        model = template.get("model") if template.get("agent") != "tutor" or role == "Tutoring" else None
+        if role == "Assessing" and template.get("agent") == "assessing" and output.__name__ == "Assessment":
+            additions = [template.get("prompts", {}).get(stage, "").strip() for stage in ("analysis", "lesson", "questions")]
+            if any(additions):
+                instruction += "\n\nAdditional Assessing instructions:\n" + "\n\n".join(filter(None, additions))
+        matches_role = (template.get("agent") in (None, "expert") and role == "Expert") or (template.get("agent") == "tutor" and role == "Tutoring") or (template.get("agent") == "assessing" and role == "Assessing")
+        model = template.get("model") if matches_role else None
         if not model or model == "configured":
             model = None
         try:
-            if not self._template or (template.get("agent") == "tutor" and role != "Tutoring"):
+            if not self._template or not matches_role:
                 return self._services.generate(role, instruction, context, output)
             return self._services.generate(
                 role,
@@ -164,7 +177,7 @@ def execute(factory, services, run_id):
 
 
 def _execute_workflow(factory, services, run_id, workflow, template, retry_feedback):
-    if workflow == "course_preparation" or (workflow == "next_activity" and template and template.get("agent") == "tutor"):
+    if workflow == "course_preparation" or (workflow in ("next_activity", "assessment") and template):
         model_recorder = RunModelRecorder()
         run_services = PromptConfiguredServices(
             services, template, retry_feedback, model_recorder

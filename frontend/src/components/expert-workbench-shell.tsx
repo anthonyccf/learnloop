@@ -16,11 +16,12 @@ const expertPages: { id: ExpertPage; label: string; href: string; detail: string
 export function ExpertWorkbenchShell({ activePage, activeAgent = "expert", onAgentChange, railContent, children }: { activePage: ExpertPage; activeAgent?: WorkbenchAgent; onAgentChange?: (agent: WorkbenchAgent) => void; railContent?: ReactNode; children: ReactNode }) {
   const workspace = useWorkspace();
   const materials = workspace.course?.documents || [];
-  return <div className={`expert-workbench ${railContent ? "expert-workbench-with-rail-content" : ""} ${activeAgent === "tutor" && activePage === "run" ? "expert-workbench-tutor-run" : ""}`}>
+  return <div className={`expert-workbench ${railContent ? "expert-workbench-with-rail-content" : ""} ${activeAgent === "tutor" && activePage === "run" ? "expert-workbench-tutor-run" : ""} ${activeAgent === "assessing" && activePage === "run" ? "expert-workbench-assessing-run" : ""}`}>
     <header className="expert-topbar">
       <Link href="/workbench/expert" className="expert-brand"><span className="expert-brand-mark" aria-hidden="true">◈</span> LearnLoop Agent Workbench</Link>
       <nav aria-label="Workbench navigation" className="expert-topnav">
         <Link href="/workbench/expert" className="active" aria-current="page">Workbench</Link>
+        <Link href="/workbench/evaluation">Pseudo-student tests</Link>
         <Link href="/agents">Run history</Link>
         <Link href="/learn">Learning</Link>
       </nav>

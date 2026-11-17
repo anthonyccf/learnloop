@@ -9,7 +9,7 @@ import { RichText } from "@/components/rich-text";
 import { type TutorHandoff } from "@/components/tutor-handoffs";
 import { useWorkspace } from "@/components/workspace-provider";
 import { api, type Assessment } from "@/lib/backend";
-import { readExpertTemplates, type AgentPromptTemplate } from "@/lib/expert-templates";
+import { loadSharedTemplates, type AgentPromptTemplate } from "@/lib/expert-templates";
 
 type Memory = {
   id: string; name: string; courseId: string;
@@ -29,12 +29,12 @@ export default function AssessingWorkbenchPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const update = () => {
-      const available = readExpertTemplates().filter(item => item.agent === "tutor");
+    const update = async () => {
+      const available = (await loadSharedTemplates()).filter(item => item.agent === "tutor");
       setTemplates(available);
       let saved = "";
       try { saved = localStorage.getItem(TEMPLATE_KEY) || ""; } catch {}
-      setTemplateId(available.some(item => item.id === saved) ? saved : "");
+      setTemplateId(available.some(item => item.id === saved) ? saved : available.find(item => item.isDefault)?.id || "");
     };
     update();
     window.addEventListener("storage", update);
@@ -76,11 +76,11 @@ export default function AssessingWorkbenchPage() {
     {!ws.courseId ? <section className="expert-empty"><h2>Choose a course</h2><p>Select a course to view Tutor assessment activity.</p></section> : <div className="expert-columns">
       <div className="expert-left-column">
         <section className="expert-card tutor-workbench-card"><div className="expert-card-heading"><div><h2>Start with the Tutor</h2><p>The Tutor requests an assessment when an answer is submitted.</p></div></div>
-          <label className="expert-field-label">Tutor template<select value={templateId} onChange={event => selectTemplate(event.target.value)}><option value="">Backend defaults</option>{templates.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label className="expert-field-label">Tutor template<select value={templateId} onChange={event => selectTemplate(event.target.value)}><option value="">Agent default</option>{templates.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <p className="tutor-workbench-note">This selection is shared with the Tutor run page. The Tutor uses its learning plan and response prompts and model settings; its question prompt and tool switches are not applied.</p>
           <Link href="/workbench/tutor" className="expert-button primary">Open Tutor run</Link>
           <p className="tutor-workbench-note">Choose or create a test memory there, run a quiz, and submit an answer. Assessment runs automatically and is saved to that memory.</p>
-          <p className="tutor-workbench-note">Assessing uses backend defaults; Assessing templates are not connected to the runtime yet.</p>
+          <p className="tutor-workbench-note">New assessments use the default Assessing template, if one is set.</p>
         </section>
         <section className="expert-card tutor-workbench-card"><div className="expert-card-heading"><div><h2>Assessment feedback</h2><p>{memory ? `Selected Tutor memory: ${memory.name}` : "The selected Tutor memory will appear here."}</p></div></div>
           {loading ? <p className="expert-muted">Loading assessment activity…</p> : memory?.history.length ? memory.history.map(item => <article className="tutor-feedback" key={item.id}><strong>{conceptName(item.conceptId)} · {item.difficulty} · {item.assessment.uncertain ? "Review needed" : item.assessment.correct ? "Correct" : "Keep practicing"}</strong><RichText>{item.assessment.feedback}</RichText><RichText>{item.assessment.explanation}</RichText><AssessmentDetails assessment={item.assessment} /></article>) : <p className="expert-muted">No completed assessments in the selected Tutor memory yet.</p>}

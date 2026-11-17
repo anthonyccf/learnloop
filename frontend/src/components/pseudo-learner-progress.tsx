@@ -1,0 +1,29 @@
+"use client";
+
+export type LearnerProgress = {
+  learnerId: string; learnerName: string; condition: string; status: string;
+  errorType?: string | null; stopReason?: string | null; attempt: number; canRetry: boolean; previousAttempts: { attempt: number; status: string; errorType?: string | null; activitiesCompleted: number }[]; activityLimit: number; activitiesCompleted: number; correctAnswers: number; hintsUsed: number;
+  milestones: { concept: string; difficulty: string; activity: number; levelActivities: number }[];
+  activities: { activity: number; concept: string; difficulty: string; before: string; after: string; correct: boolean; hinted: boolean; session: number; boundaryReset: boolean }[];
+  preScore: number | null; postScore: number | null; verifiedTargetActivities: number | null; postTestMasteredConcepts: number | null; calls: number | null; costUsd: number | null; simulationPolicyAgreement: number | null;
+};
+
+const conditionName: Record<string, string> = { adaptive: "Adaptive Tutor", fixed_sequence: "Fixed sequence", memory_free: "Without Tutor memory" };
+const stateName: Record<string, string> = { unassessed: "Unassessed", developing: "Developing", demonstrated: "Demonstrated", review_due: "Review due" };
+
+export function PseudoLearnerProgress({ episodes, retrying, onRetry }: { episodes: LearnerProgress[]; retrying: string; onRetry: (learnerId: string, condition: string) => void }) {
+  if (!episodes.length) return null;
+  return <div className="pseudo-progress"><h3>Learner progress</h3><p>Counts are simulated learning activities, not mouse clicks. A demonstrated level is the Tutor’s estimate for a concept and difficulty; it is not a final-test result.</p>{episodes.map((episode) => <details className="pseudo-progress-episode" key={`${episode.learnerId}-${episode.condition}`} open={episode.status === "in_progress" || undefined}>
+    <summary><strong>{episode.learnerName}</strong> · {conditionName[episode.condition] || episode.condition} · {episode.status.replaceAll("_", " ")} · {episode.activitiesCompleted} / {episode.activityLimit} activities{episode.attempt > 1 && ` · attempt ${episode.attempt}`}</summary>
+    <div className="pseudo-progress-content"><div className="pseudo-progress-stats"><div><strong>{episode.activitiesCompleted}</strong><span>Activities completed</span></div><div><strong>{episode.correctAnswers}</strong><span>Correct answers</span></div><div><strong>{episode.hintsUsed}</strong><span>Activities with hints</span></div><div><strong>{episode.postScore == null ? "Pending" : `${Math.round(episode.postScore * 100)}%`}</strong><span>Final test</span></div></div>
+      {episode.errorType && <p role="alert">This learner stopped with an error ({episode.errorType}); the history shows the completed activities only.</p>}
+      {episode.stopReason === "no_eligible_frozen_activity" && <p>The session stopped early because no eligible unused activities remained.</p>}
+      {episode.canRetry && <div className="pseudo-retry"><p>Retry restarts this learner from the beginning using the same saved materials and seed. Other learners are not rerun. Up to three attempts are allowed. Model calls may incur charges; a retry may fail again.</p><button type="button" className="expert-button secondary" disabled={!!retrying} onClick={() => onRetry(episode.learnerId, episode.condition)}>{retrying === `${episode.learnerId}:${episode.condition}` ? "Starting retry…" : "Retry learner"}</button></div>}
+      {!episode.canRetry && episode.attempt >= 3 && episode.status !== "completed" && <p>The three-attempt limit has been reached. Start a new test after reviewing the failure.</p>}
+      {!!episode.previousAttempts?.length && <details className="pseudo-attempt-history"><summary>Previous attempts ({episode.previousAttempts.length})</summary><ul>{episode.previousAttempts.map((attempt) => <li key={attempt.attempt}>Attempt {attempt.attempt}: {attempt.status.replaceAll("_", " ")} · {attempt.activitiesCompleted} activities{attempt.errorType ? ` · ${attempt.errorType}` : ""}</li>)}</ul></details>}
+      <h4>Activities to a demonstrated level</h4>{episode.milestones.length ? <ul>{episode.milestones.map((item) => <li key={`${item.concept}-${item.difficulty}-${item.activity}`}>{item.concept} · {item.difficulty}: first recorded after activity {item.activity} overall ({item.levelActivities} {item.levelActivities === 1 ? "activity" : "activities"} on this concept at this level)</li>)}</ul> : <p>{episode.activitiesCompleted ? "No demonstrated level has been recorded in these activities." : "No activities recorded yet."}</p>}
+      {episode.postScore != null && <p>{episode.verifiedTargetActivities == null ? "The final test did not verify the 80% target." : `The final test verified the 80% target after ${episode.verifiedTargetActivities} activities; the earliest possible attainment was not measured.`} {episode.postTestMasteredConcepts != null && `${episode.postTestMasteredConcepts} concepts met their target on the final test.`}</p>}
+      {episode.attempt > 1 && episode.calls != null && <p>Retry: {episode.calls} model calls · cost {episode.costUsd == null ? "unknown" : `$${episode.costUsd.toFixed(4)}`} · simulated answer-policy agreement {episode.simulationPolicyAgreement == null ? "unknown" : `${Math.round(episode.simulationPolicyAgreement * 100)}%`}.</p>}
+      {episode.activities.length > 0 && <><h4>Activity history</h4><ol className="pseudo-progress-timeline">{episode.activities.map((activity) => <li key={activity.activity}><strong>Activity {activity.activity} · {activity.concept}</strong><span>{activity.difficulty} · {activity.correct ? "correct" : "incorrect"}{activity.hinted ? " · hint used" : " · no hint"} · {stateName[activity.before] || activity.before} → {stateName[activity.after] || activity.after}</span>{activity.boundaryReset && <small>Tutor history reset at the start of this session.</small>}</li>)}</ol></>}
+    </div></details>)}</div>;
+}

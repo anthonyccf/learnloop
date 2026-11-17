@@ -30,7 +30,7 @@ def test_run_snapshots_are_isolated_and_private_to_their_material(stack):
         doc = Document(course_id=course_id, filename='notes.txt', sha256='a' * 64,
                        content_type='text/plain', content=b'original', status='prepared', pages=1,
                        graph={'concepts': [{'id': 'concept', 'title': 'Original', 'summary': 'first', 'sourceChunkIds': ['chunk']}],
-                              'resources': {'concept': {'lesson': {'title': 'First lesson'}, 'tests': [{'prompt': 'First question'}]}}})
+                              'resources': {'concept': {'lesson': {'title': 'First lesson', 'explanation': 'Original explanation'}, 'tests': [{'prompt': 'First question', 'correctChoiceId': 'a'}]}}})
         other = Document(course_id=course_id, filename='other.txt', sha256='b' * 64,
                          content_type='text/plain', content=b'other', status='prepared', pages=1, graph={})
         db.add_all([doc, other])
@@ -46,6 +46,8 @@ def test_run_snapshots_are_isolated_and_private_to_their_material(stack):
         graph = copy.deepcopy(doc.graph)
         graph['concepts'][0]['title'] = 'Revised'
         graph['resources']['concept']['lesson']['title'] = 'Second lesson'
+        graph['resources']['concept']['lesson']['explanation'] = 'Revised explanation'
+        graph['resources']['concept']['tests'][0]['correctChoiceId'] = 'b'
         graph['resources']['concept']['tests'][0]['prompt'] = 'Second question'
         doc.graph = graph
         db.get(Chunk, 'chunk').text = 'revised passage'
@@ -69,6 +71,11 @@ def test_run_snapshots_are_isolated_and_private_to_their_material(stack):
         assert first_view.json()['runId'] == first_id
         assert first_view.json()['items'][0][key] == old
         assert second_view.json()['items'][0][key] == new
+    for kind, record_id, key, expected in [('lessons', 'lesson:concept', 'explanation', 'Original explanation'),
+                                            ('questions', 'concept:question:1', 'correctChoiceId', 'a')]:
+        preview = client.get(endpoint, params={'run_id': first_id, 'kind': kind, 'record_id': record_id})
+        assert preview.status_code == 200
+        assert preview.json()['relationship']['preview'][key] == expected
     relation = client.get(endpoint, params={'run_id': first_id, 'kind': 'concepts', 'record_id': 'concept'}).json()['relationship']
     assert relation['sourceChunks'][0]['text'] == 'original passage'
     assert client.get(endpoint, params={'run_id': legacy_id}).status_code == 409
@@ -175,3 +182,36 @@ def test_evaluation_uses_frozen_snapshot_and_reports_missing_data(stack):
     active_data = client.get(f'/api/agent-activity/runs/{active_id}/evaluation').json()
     assert active_data['snapshotAvailable'] is False and active_data['concepts'] is None
     assert active_data['elapsedSeconds'] is None
+
+
+def test_changed_lesson_links_to_unchanged_records(stack):
+    client, factory, _, _ = stack
+    _, upload = prepare(stack)
+    doc_id = upload['documentId']
+    run_id = client.post(f'/api/documents/{doc_id}/analyze', json={'force': True}).json()['runId']
+    endpoint = f'/api/documents/{doc_id}/inspection'
+    with factory.begin() as db:
+        doc = db.get(Document, doc_id)
+        graph = copy.deepcopy(doc.graph)
+        concept_id = graph['concepts'][0]['id']
+        graph['resources'][concept_id]['lesson']['title'] = 'Changed lesson only'
+        doc.graph = graph
+        chunk_id = db.scalar(select(Chunk.id).where(Chunk.document_id == doc_id))
+
+    concepts = client.get(endpoint, params={'run_id': run_id, 'kind': 'concepts'}).json()
+    assert any(item['id'] == concept_id for item in concepts['items'])
+    for kind, record_id in [('concepts', concept_id), ('lessons', f'lesson:{concept_id}'),
+                            ('source_chunks', chunk_id)]:
+        response = client.get(endpoint, params={'run_id': run_id, 'kind': kind, 'record_id': record_id})
+        assert response.status_code == 200
+        assert response.json()['relationship']['selected']['id'] == record_id
+    lesson = client.get(endpoint, params={'run_id': run_id, 'kind': 'lessons',
+                                          'record_id': f'lesson:{concept_id}'}).json()
+    assert lesson['relationship']['preview']['title'] == 'Changed lesson only'
+    assert client.get(endpoint, params={'run_id': run_id, 'kind': 'concepts',
+                                       'record_id': 'missing'}).status_code == 404
+    with factory.begin() as db:
+        run_status(db, run_id, 'completed', 'Snapshot complete')
+    snapshot = client.get(endpoint, params={'run_id': run_id, 'kind': 'concepts', 'record_id': concept_id})
+    assert snapshot.status_code == 200
+    assert snapshot.json()['inspectionMode'] == 'snapshot'
