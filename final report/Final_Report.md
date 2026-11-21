@@ -3,12 +3,12 @@
 **Course:** COMP7608B Large Language Models — Final Project Report  
 **Deadline:** 25 November 2026
 
-| Name | Student ID | Email |
-| :--- | :--- | :--- |
-| Fong Chi Ching | 3035299466 | u3529946@connect.hku.hk |
-| Ching Nok Yee | 3035283572 | u3528357@connect.hku.hk |
-| Lai Hok Lam Justin | 3036657081 | u3665708@connect.hku.hk |
-| Zhou Yuxin | 3036791693 | u3679169@connect.hku.hk |
+| Email |
+| :--- |
+| u3529946@connect.hku.hk |
+| u3528357@connect.hku.hk |
+| u3665708@connect.hku.hk |
+| u3679169@connect.hku.hk |
 
 **Submitted version:** `[TEAM TODO: git tag or commit, for example v1.0-final]`  
 **Repository:** `[TEAM TODO: link, if the repository is shared. The submission ZIP includes the source snapshot.]`
@@ -443,10 +443,10 @@ The simulated students use assumed learning and hint rates. The material is one 
 
 | Member | Contribution |
 | :--- | :--- |
-| Fong Chi Ching | `[TEAM TODO]` |
-| Ching Nok Yee | `[TEAM TODO]` |
-| Lai Hok Lam Justin | `[TEAM TODO]` |
-| Zhou Yuxin | `[TEAM TODO]` |
+| Member 1 | `[TEAM TODO]` |
+| Member 2 | `[TEAM TODO]` |
+| Member 3 | `[TEAM TODO]` |
+| Member 4 | `[TEAM TODO]` |
 
 The implementation uses FastAPI 0.128.4, Uvicorn 0.40.0, SQLAlchemy 2.0.46, Alembic 1.20.0, Pydantic 2.12.5, pydantic-settings 2.12.0, sqlite-vec 0.1.9, httpx 0.28.1, pypdf 6.11.0, filelock 4.2.8, and jsonschema 4.26.0. The frontend uses Next.js 16.4.2, React 19.3.0, Zod, react-markdown, and KaTeX. Slide images use Poppler’s `pdftoppm` when it is installed. Model access is through OpenRouter and Ollama, with BAAI `bge-m3` [7]. The evaluation unit is COMP7608B Lecture 2. `[TEAM TODO: name any other sample file included in the ZIP.]`
 
