@@ -3,13 +3,6 @@
 **Course:** COMP7608B Large Language Models — Final Project Report  
 **Deadline:** 25 November 2026
 
-| Email |
-| :--- |
-| u3529946@connect.hku.hk |
-| u3528357@connect.hku.hk |
-| u3665708@connect.hku.hk |
-| u3679169@connect.hku.hk |
-
 **Submitted version:** `[TEAM TODO: git tag or commit, for example v1.0-final]`  
 **Repository:** `[TEAM TODO: link, if the repository is shared. The submission ZIP includes the source snapshot.]`
 
