@@ -415,7 +415,7 @@ def test_delivered_lesson_reaches_student_and_mixed_answers_match_format(tmp_pat
         setup,
         release,
         tmp_path / "run",
-        {"concepts": 1, "activities": 2, "baselines": False},
+        {"concepts": 1, "activities": 2, "baselines": False, "simulator": "controlled"},
         SimpleNamespace(llm_model="workflow-fixture"),
         provider_cls=RecordingFixture,
     )
@@ -494,7 +494,15 @@ def test_delivered_lesson_reaches_student_and_mixed_answers_match_format(tmp_pat
     assert answer_body({"format": "open"}, open_reply) == {"answerText": "I am not sure."}
 
     calls_10, tokens_10 = episode_limits(10, 4)
-    assert calls_10 > 60 + 48 and tokens_10 >= calls_10 * 5000
+    assert calls_10 > 10 + 48 and tokens_10 >= calls_10 * 5000
+    saved_exams = thaw(tmp_path / "run" / "exams.json")["payload"]
+    assert saved_exams["pre"] == []
+    assert saved_exams["post"] == []
+    assert report["preparationUsage"]["calls"] == 0
+    metrics = report["results"][0]["metrics"]
+    assert metrics["preScore"] is None
+    assert metrics["gain"] is None
+    assert metrics["postScore"] is None
 
 
 def test_workbench_services_match_live_llm_settings_and_query_retrieval(monkeypatch, tmp_path):
@@ -580,7 +588,7 @@ def test_workbench_services_match_live_llm_settings_and_query_retrieval(monkeypa
     assert sent[0]["messages"][0]["content"].startswith("You are the LearnLoop Tutoring Agent.")
     assert "temperature" not in sent[0]
     assert "seed" not in sent[0]
-    assert sent[0]["max_tokens"] == 2500
+    assert sent[0]["max_tokens"] == 6000
     assert sent[1]["model"] == "verifier-model"
     assert sent[1]["max_tokens"] == 6000
     assert services.last_resolved_model == "verifier-model"
@@ -614,3 +622,48 @@ def test_step_uses_parent_outcome_when_expert_handoff_fails():
     view["runs"][-1] = {"status": "needs_review", "summary": "Source review failed"}
     with pytest.raises(RuntimeError, match="Source review failed"):
         check_step(view)
+
+
+def test_default_simulator_is_belief():
+    from learnloop.api.routes.evaluations import TestOptions
+
+    opts = TestOptions()
+    assert opts.simulator == "belief"
+    assert opts.agentModel == "configured"
+    assert opts.studentModel == "configured"
+
+
+def test_pseudo_run_routes_agent_and_student_models_separately(tmp_path):
+    seen = []
+
+    class ModelRecordingProvider(OfflineProvider):
+        def __init__(self, settings, root, **kwargs):
+            super().__init__(settings, root, **kwargs)
+            self.model = settings.llm_model
+            self.temperature = None
+
+        def generate(self, role, instruction, context, output):
+            seen.append((role, self.model))
+            return super().generate(role, instruction, context, output)
+
+    setup, release = sample()
+    report = run(
+        setup,
+        release,
+        tmp_path / "run",
+        {
+            "concepts": 1,
+            "activities": 2,
+            "baselines": False,
+            "simulator": "belief",
+            "agentModel": "openai/gpt-6-luna",
+            "studentModel": "google/gemini-2.5-flash",
+        },
+        SimpleNamespace(llm_model="default-model"),
+        provider_cls=ModelRecordingProvider,
+    )
+    assert report["completed"] == 1
+    sim_models = {model for role, model in seen if role == "Simulator"}
+    agent_models = {model for role, model in seen if role in ("Tutoring", "Assessing", "Expert")}
+    assert sim_models == {"google/gemini-2.5-flash"}
+    assert agent_models == {"openai/gpt-6-luna"}

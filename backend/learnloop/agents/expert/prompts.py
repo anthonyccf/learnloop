@@ -167,8 +167,10 @@ Fields:
 - points: 3-6 items of one or two sentences, each teaching or connecting one idea. A point may start with
   a short **bold label**. The hook and points together are roughly 70-130 words; cut filler, recaps and
   unrelated background, but keep necessary reasoning.
-- equations: 0-2 source-supported formulas, each with an explanation that defines every symbol. Leave the
-  array empty when no formula is needed; never add decorative formulas.
+- equations: 0-2 source-supported formulas, each with an explanation of its symbols. If the passage
+  defines a symbol, use that definition. If it uses a symbol or technical term without defining it, state
+  the ordinary established meaning and do not add a result, procedure, or behavior the passage does not
+  state. Leave the array empty when no formula is needed; never add decorative formulas.
 - workedExample: one example following the worked example rules below. It is not counted in the word budget.
   Do not repeat it in the points, and keep a calculation complete rather than cutting steps.
 - takeaway: one sentence on why the idea matters.
@@ -182,8 +184,10 @@ Math formatting:
 - Use braces for multi-character subscripts or exponents, and \\text{...} for word labels.
 
 Evidence:
-- Use only the supplied passages as factual evidence. Faithful paraphrase is fine. A separate review checks
-  every substantive claim and citation against its passage before learners see it.
+- Use only the supplied passages as factual evidence. Faithful paraphrase is fine. When a passage uses a
+  symbol or technical term without defining it, state its ordinary established meaning. Do not add facts,
+  results, or steps the passages do not support. A separate review checks every substantive claim and
+  citation against its passage before learners see it.
 """
     + EXAMPLE_STYLE_PROMPT
 )

@@ -149,7 +149,9 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True, les
             for c in db.scalars(select(Chunk).where(Chunk.document_id == document_id))
         ]
     with factory() as db:
-        resources = copy.deepcopy(document_for(db, run_id, document_id).graph.get("resources", {}))
+        doc_graph = document_for(db, run_id, document_id).graph
+        resources = copy.deepcopy(doc_graph.get("resources", {}))
+        review_drafts = copy.deepcopy(doc_graph.get("reviewDrafts", {}))
         run_input = db.get(Run, run_id).input
         review_feedback = copy.deepcopy(run_input.get("materialReviewFeedback", {}))
         prompt_fingerprint = run_input.get("prompt_template_fingerprint")
@@ -232,8 +234,9 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True, les
             payload["rejectedDraft"] = remap_sources(rejected, aliases)
             payload["revisionInstruction"] = (
                 "Repair the rejected primary lesson and all tests, explanations and hints. Resolve teaching-scope feedback by referencing prerequisites rather than reteaching them. "
-                "Use only supplied passages and their exact alias IDs. Remove unsupported claims; do not preserve "
-                "faulty citations or tests. A passage marked 'Visible on this slide' includes a transcription "
+                "Use only supplied passages and their exact alias IDs. If a claim is stated in another supplied passage (check primaryPassageIds), cite that passage's alias in sources; otherwise remove unsupported claims and do not preserve "
+                "faulty citations or tests. Keep the ordinary established meaning of a symbol or technical term "
+                "the passage already uses, and remove a meaning that changes the calculation or adds an unstated fact. A passage marked 'Visible on this slide' includes a transcription "
                 "from the original page. Reassess the earlier feedback against that evidence and cite that "
                 "passage for any recovered equation or diagram. Distinguish the slide's stated equation "
                 "from any derived special case. If evidence is still missing, limit the explanation to "
@@ -349,14 +352,19 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True, les
     def generate(concept):
         feedback = review_feedback.get(concept["id"])
         rejected = None
-        transcripts = dict(resources.get(concept["id"], {}).get("slideEvidence", {}))
+        saved_slide_evidence = (
+            resources.get(concept["id"], {}).get("slideEvidence")
+            or (review_drafts.get(concept["id"], {}).get("draft") or {}).get("slideEvidence")
+            or {}
+        )
+        transcripts = dict(saved_slide_evidence)
         evidence = with_slide_evidence(chunk_map, transcripts)
         tried_slides = False
         question_numbers = []
         context = source_context(
             concept, chunks, [course_concepts[id] for id in curriculum[concept["id"]]["assumes"]]
         )
-        for attempt in range(4):
+        for attempt in range(5):
             if attempt:
                 context = repair_context(concept, chunks, context[:6], rejected, feedback, attempt)
                 with factory.begin() as db:
@@ -417,15 +425,27 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True, les
                     or f.get("review", {}).get("repairKind") == "visual_evidence"
                     for f in findings
                 )
+                fallback_slides = (
+                    attempt >= 1
+                    and not questions_to_repair(findings, output)
+                    and any(
+                        f["code"]
+                        in ("unsupported_content", "insufficient_evidence", "repeated_teaching")
+                        for f in findings
+                    )
+                )
                 recovered = {}
-                if recovery and needs_slides and output and not tried_slides:
+                if recovery and (needs_slides or fallback_slides) and output and not tried_slides:
                     tried_slides = True
                     recovered = recovery.recover(concept, output, error.details, chunks)
                     transcripts.update(recovered)
                     evidence = with_slide_evidence(chunk_map, transcripts)
-                if error.code not in REPAIRABLE or (
-                    attempt >= 2 and not (attempt == 2 and recovered)
-                ):
+                question_repair = questions_to_repair(findings, output)
+                bonus_attempt = (
+                    attempt == 2
+                    and (recovered or question_repair or error.code == "invalid_model_output")
+                ) or (attempt == 3 and bool(question_repair))
+                if error.code not in REPAIRABLE or (attempt >= 2 and not bonus_attempt):
                     if feedback and error.details:
                         error.details = {
                             "currentReview": error.details,
@@ -436,7 +456,7 @@ def prepare_materials(factory, services, run_id, document_id, finalize=True, les
                         error.draft["slideEvidence"] = dict(transcripts)
                     raise
                 latest_feedback = error.details or {"message": error.message}
-                question_numbers = questions_to_repair(findings, output)
+                question_numbers = question_repair
                 feedback = (
                     {"previousFeedback": feedback, "currentReview": latest_feedback}
                     if feedback

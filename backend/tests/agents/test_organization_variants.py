@@ -71,3 +71,14 @@ def test_variant_survives_template_wrapper():
         organization_prompt(wrapped, "CURRICULUM_PROMPT")
         == VARIANTS["procedural"]["CURRICULUM_PROMPT"]
     )
+
+
+def test_redeveloped_variants_include_repair_and_fidelity_guardrails():
+    for variant, mapping in VARIANTS.items():
+        assert "sourceReviewFeedback" in mapping["SECTION_PROMPT"], variant
+        assert "rejectedDraft" in mapping["SECTION_PROMPT"], variant
+        assert "validationFeedback" in mapping["REVIEW_PROMPT"], variant
+        assert "validationFeedback" in mapping["CURRICULUM_PROMPT"], variant
+        assert "proposedPlan" in mapping["CURRICULUM_PROMPT"], variant
+        assert "teaches" in mapping["CURRICULUM_PROMPT"], variant
+

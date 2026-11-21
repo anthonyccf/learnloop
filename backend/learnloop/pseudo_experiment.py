@@ -12,7 +12,7 @@ from learnloop.core.grounding import remap_sources, source_ids, validate_sources
 from learnloop.core.schemas import Concept, Graph, Lesson, PostLesson, Question
 from learnloop.evaluation.artifacts import checkpoint, digest, freeze, prompt_key
 from learnloop.evaluation.metrics import analyze
-from learnloop.evaluation.prepare import author_exams, validate_exams
+from learnloop.evaluation.prepare import validate_exams
 from learnloop.evaluation.provider import Provider, usage
 from learnloop.evaluation.schema import ExperimentConfig, Passage, Unit
 from learnloop.pseudo_control import raise_if_stopped
@@ -174,7 +174,11 @@ class RoutedProvider:
             prompt += "\n\nSelected workbench template instructions:\n" + "\n\n".join(
                 filter(None, additions)
             )
-        if role == "TestAuthor" and output.__name__ == "ExamDraft" and self.training_prompts:
+        if (
+            role == "TestAuthor"
+            and output.__name__ in ("ExamDraft", "PostExamDraft")
+            and self.training_prompts
+        ):
             prompt += " Use different prompts and scenarios from the supplied practice questions."
             context = {
                 **context,
@@ -208,9 +212,8 @@ class RoutedProvider:
 
 
 def episode_limits(concept_count, activities):
-    exam_calls = 6 * concept_count
-    max_calls = max(64, exam_calls + concept_count + 12 * activities + 16)
-    max_tokens = max(250000, max_calls * 5000)
+    max_calls = max(64, concept_count + 12 * activities + 16)
+    max_tokens = max(250000, max_calls * 8000)
     return max_calls, max_tokens
 
 
@@ -239,7 +242,8 @@ def run(setup, release, output, config, settings, provider_cls=Provider, reused=
     if reused:
         status("Loading prepared material")
         exams, artifact = reused["exams"], reused["expert"]
-        validate_exams(unit, exams)
+        if exams.get("pre") or exams.get("post"):
+            validate_exams(unit, exams, require_pre=False)
         if (
             exams.get("unitHash") != digest(unit.model_dump())
             or artifact.get("graph") != unit.graph.model_dump()
@@ -247,19 +251,6 @@ def run(setup, release, output, config, settings, provider_cls=Provider, reused=
             raise ValueError("Prepared material does not match the frozen unit.")
         preparation_usage = usage([])
     else:
-        prep_base = provider_cls(
-            settings,
-            output / "preparation-calls",
-            max_calls=80 * len(unit.graph.concepts),
-            max_tokens=400000 * len(unit.graph.concepts),
-        )
-        prep = RoutedProvider(prep_base, setup["templates"])
-        training_prompts = {
-            concept.id: [
-                question["prompt"] for question in materials[concept.id]["content"]["tests"]
-            ]
-            for concept in unit.graph.concepts
-        }
         artifact = {
             "mode": "exploratory",
             "materialSource": setup.get("materialSource", "workbench_generated"),
@@ -268,11 +259,15 @@ def run(setup, release, output, config, settings, provider_cls=Provider, reused=
             "materials": materials,
         }
         raise_if_stopped(output)
-        status("Preparing independent exams")
-        prep.training_prompts = training_prompts
-        exams = author_exams(unit, prep, output / "exams.json")["payload"]
-        preparation_usage = usage(prep.calls)
-    heldout = {prompt_key(item["question"]) for phase in ("pre", "post") for item in exams[phase]}
+        exams = {
+            "unitHash": digest(unit.model_dump()),
+            "pre": [],
+            "post": [],
+            "mode": "skipped",
+        }
+        freeze(output / "exams.json", exams)
+        preparation_usage = usage([])
+    heldout = {prompt_key(item["question"]) for phase in ("pre", "post") for item in exams.get(phase, ())}
     for concept in unit.graph.concepts:
         validate_pack(artifact["materials"][concept.id]["content"], unit.chunks(), heldout)
     if reused:
@@ -295,13 +290,18 @@ def run(setup, release, output, config, settings, provider_cls=Provider, reused=
         session.run_path = output
         for learner in setup["learners"]:
             raise_if_stopped(output)
+            student_model = config.get("studentModel")
+            if not student_model or student_model == "configured":
+                student_model = learner.get("model") or "configured"
             spec = {
                 "ability": [learner["basic"], learner["intermediate"], learner["advanced"]],
                 "hint": learner["hint"],
                 "gain": learner["gain"],
                 "delay": learner["delaySeconds"] * 1000,
                 "misconceptions": learner["misconceptions"],
-                "simulator": config.get("simulator", "controlled"),
+                "simulator": config.get("simulator", "belief"),
+                "model": student_model,
+                "agentModel": config.get("agentModel") or "configured",
             }
             status(f"Testing {learner['name']}")
             root = output / "episodes" / digest([learner["id"], "adaptive"])[:16]

@@ -107,11 +107,25 @@ def _merge_section(services, section, catalog, document_id, saved_mapping=None):
     return mapping
 
 
+def _creates_cycle(edges, prerequisite, dependent):
+    """Return True if adding prerequisite -> dependent would introduce a cycle."""
+    children = {}
+    for edge in edges:
+        children.setdefault(edge["prerequisite"], []).append(edge["dependent"])
+    stack, seen = [dependent], set()
+    while stack:
+        node = stack.pop()
+        if node == prerequisite:
+            return True
+        if node not in seen:
+            seen.add(node)
+            stack.extend(children.get(node, ()))
+    return False
+
+
 def analyze_document(factory, services, run_id, document_id, chunks):
     sections = section_passages(chunks)
     chunk_map = {c["id"]: c for c in chunks}
-    aliases = {c["id"]: f"s{i}" for i, c in enumerate(chunks)}
-    original_ids = {alias: id for id, alias in aliases.items()}
     with factory.begin() as db:
         doc = document_for(db, run_id, document_id)
         prompt_fingerprint = db.get(Run, run_id).input.get("prompt_template_fingerprint")
@@ -145,10 +159,13 @@ def analyze_document(factory, services, run_id, document_id, chunks):
 
     def inspect(index):
         passages = sections[index]
+        # Section-local aliases (s0..sN) avoid off-by-one confusion with 1-based page numbers.
+        section_aliases = {c["id"]: f"s{i}" for i, c in enumerate(passages)}
+        section_original_ids = {alias: id for id, alias in section_aliases.items()}
         result = saved_sections.get(str(index))
         if result is not None:
             result = {k: v for k, v in result.items() if k != "mapping"}
-            result = remap_sources(result, aliases)
+            result = remap_sources(result, section_aliases)
         else:
             result = None
         payload = {
@@ -156,7 +173,7 @@ def analyze_document(factory, services, run_id, document_id, chunks):
             "totalSections": len(sections),
             "pages": sorted({c["page"] for c in passages}),
             "passages": [
-                {"chunkId": aliases[c["id"]], "page": c["page"], "text": c["text"]}
+                {"chunkId": section_aliases[c["id"]], "page": c["page"], "text": c["text"]}
                 for c in passages
             ],
         }
@@ -168,23 +185,22 @@ def analyze_document(factory, services, run_id, document_id, chunks):
         # A section may legitimately contain no teaching claims (e.g. title/Q&A).
         if result is None:
             result = services.generate("Expert", section_prompt, payload, SectionGraph).model_dump()
-        validate_graph(result)
         receipt = None
-        if result["concepts"]:
+        if result["concepts"] or result.get("prerequisites"):
             result, receipt = generate_grounded(
                 services,
                 "Expert",
                 section_prompt,
                 payload,
                 SectionGraph,
-                {aliases[c["id"]]: c for c in passages},
+                {section_aliases[c["id"]]: c for c in passages},
                 candidate=result,
                 receipt=receipts.get(str(index)),
             )
             if hasattr(result, "model_dump"):
                 result = result.model_dump()
-            validate_graph(result)
-        result = remap_sources(result, original_ids)
+        validate_graph(result)
+        result = remap_sources(result, section_original_ids)
         if result["concepts"]:
             receipt = {
                 "status": "supported",
@@ -255,7 +271,11 @@ def analyze_document(factory, services, run_id, document_id, chunks):
         edge_pairs = {(e["prerequisite"], e["dependent"]) for e in edges}
         for edge in section["prerequisites"]:
             prerequisite, dependent = mapping[edge["prerequisite"]], mapping[edge["dependent"]]
-            if prerequisite != dependent and (prerequisite, dependent) not in edge_pairs:
+            if (
+                prerequisite != dependent
+                and (prerequisite, dependent) not in edge_pairs
+                and not _creates_cycle(edges, prerequisite, dependent)
+            ):
                 edges.append({**edge, "prerequisite": prerequisite, "dependent": dependent})
                 edge_pairs.add((prerequisite, dependent))
         with factory.begin() as db:

@@ -9,7 +9,7 @@ import { PseudoLearnerDialog, type PseudoLearner } from "@/components/pseudo-lea
 import { PseudoLearnerProgress, type LearnerProgress } from "@/components/pseudo-learner-progress";
 
 type Setup = { id: string; availableSimulators?: string[]; course: { title: string }; material: { id: string; filename: string; documentCount?: number }; release: { id: string; version: number } };
-type WorkbenchGeneratedRun = { runId: string; createdAt: string; filenames: string[]; documents: { id: string; filename: string }[]; revision: number; ready: boolean; published: boolean; releaseId?: string | null };
+type WorkbenchGeneratedRun = { runId: string; createdAt: string; filenames: string[]; documents: { id: string; filename: string }[]; revision: number; ready: boolean; published: boolean; releaseId?: string | null; templateName?: string | null; templateId?: string | null };
 type PseudoRun = {
   id: string;
   setupId: string;
@@ -28,14 +28,14 @@ type PseudoRun = {
   message?: string;
   errorType?: string;
   progress: LearnerProgress[];
-  config: { concepts: number; activities: number; baselines: boolean; sourceRunId?: string | null; simulator?: "controlled" | "belief" };
+  config: { concepts: number; activities: number; baselines: boolean; sourceRunId?: string | null; simulator?: "controlled" | "belief"; agentModel?: string; studentModel?: string };
   report: null | {
     conceptCount: number;
     completed: number;
     failedOrStopped: number;
     scopeWarnings: string[];
     preparationUsage: { calls: number; costUsd: number | null; usageComplete?: boolean };
-    episodes: { learnerName: string; baseline: string; status: string; errorType: string | null; profileControlValid?: boolean; metrics?: { preScore: number; postScore: number; gain: number; calls: number; costUsd: number | null; simulationPolicyAgreement: number | null } }[];
+    episodes: { learnerName: string; baseline: string; status: string; errorType: string | null; profileControlValid?: boolean; metrics?: { preScore: number | null; postScore: number | null; gain: number | null; calls: number; costUsd: number | null; simulationPolicyAgreement: number | null } }[];
   };
 };
 
@@ -43,6 +43,18 @@ const agentRoles: { id: WorkbenchAgent; label: string }[] = [
   { id: "expert", label: "Expert" },
   { id: "tutor", label: "Tutor" },
   { id: "assessing", label: "Assessing" },
+];
+
+type ModelChoice = { id: string; name: string };
+const fallbackModels: ModelChoice[] = [
+  { id: "openai/gpt-6-luna", name: "OpenAI: GPT-6 Luna" },
+  { id: "google/gemini-2.5-flash", name: "Google: Gemini 2.5 Flash" },
+  { id: "google/gemini-2.5-pro", name: "Google: Gemini 2.5 Pro" },
+  { id: "anthropic/claude-haiku-4.5", name: "Anthropic: Claude Haiku 4.5" },
+  { id: "anthropic/claude-sonnet-4.5", name: "Anthropic: Claude Sonnet 4.5" },
+  { id: "openai/gpt-4.1-mini", name: "OpenAI: GPT-4.1 Mini" },
+  { id: "deepseek/deepseek-chat-v3-0324", name: "DeepSeek: Chat V3" },
+  { id: "qwen/qwen3-32b", name: "Qwen: Qwen3 32B" },
 ];
 
 export default function PseudoStudentPage() {
@@ -68,7 +80,12 @@ export default function PseudoStudentPage() {
   const [sourceRun, setSourceRun] = useState("");
   const [concepts, setConcepts] = useState(1);
   const [activities, setActivities] = useState(2);
-  const [simulator, setSimulator] = useState("controlled");
+  const [simulator, setSimulator] = useState("belief");
+  const [availableModels, setAvailableModels] = useState<ModelChoice[]>(fallbackModels);
+  const [agentModel, setAgentModel] = useState("configured");
+  const [customAgentModel, setCustomAgentModel] = useState("");
+  const [studentModel, setStudentModel] = useState("configured");
+  const [customStudentModel, setCustomStudentModel] = useState("");
   const [running, setRunning] = useState(false);
   const [retrying, setRetrying] = useState("");
   const [stopping, setStopping] = useState("");
@@ -109,6 +126,26 @@ export default function PseudoStudentPage() {
     const timer = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/openrouter/models")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload: { models?: ModelChoice[] } | null) => {
+        if (!active || !payload?.models?.length) return;
+        const seen = new Set<string>();
+        const merged: ModelChoice[] = [];
+        for (const item of [...fallbackModels, ...payload.models.slice(0, 60)]) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            merged.push({ id: item.id, name: item.name });
+          }
+        }
+        setAvailableModels(merged);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const initial = window.setTimeout(() => void refreshRuns(), 0);
@@ -180,6 +217,8 @@ export default function PseudoStudentPage() {
     }
   }
 
+  const expertLocked = materialMode === "previous";
+  const lockedExpertTemplate = expertLocked ? templates.find((template) => template.agent === "expert" && template.id === selectedWorkbenchRun?.templateId) : undefined;
   const canStart = hasMaterial && validConceptCount && selectedLearners.length > 0 && selectedLearners.length <= 20 &&
     Number.isInteger(activities) && activities >= 2 && activities <= 12 && !running;
 
@@ -192,11 +231,13 @@ export default function PseudoStudentPage() {
     try {
       const selection = {
         courseId,
-        expertTemplateId: selected.expert || null,
+        expertTemplateId: expertLocked ? lockedExpertTemplate?.id || null : selected.expert || null,
         tutorTemplateId: selected.tutor || null,
         assessingTemplateId: selected.assessing || null,
         learnerProfileIds: selectedLearners,
       };
+      const resolvedAgentModel = agentModel === "__custom__" ? (customAgentModel.trim() || "configured") : agentModel;
+      const resolvedStudentModel = studentModel === "__custom__" ? (customStudentModel.trim() || "configured") : studentModel;
       let started: PseudoRun;
       if (materialMode === "new") {
         const documentIds = sourceTab === "existing" ? selectedDocuments.map((doc) => doc.id) : [];
@@ -208,6 +249,7 @@ export default function PseudoStudentPage() {
         }
         started = await api<PseudoRun>("evaluations/pseudo-runs/from-files", {
           ...selection, documentIds, concepts, activities, simulator,
+          agentModel: resolvedAgentModel, studentModel: resolvedStudentModel,
         });
       } else {
         const setup = await api<Setup>("evaluations/setups", {
@@ -219,6 +261,7 @@ export default function PseudoStudentPage() {
         started = await api<PseudoRun>("evaluations/pseudo-runs", {
           setupId: setup.id, concepts: preparation?.config.concepts ?? concepts,
           activities, simulator, baselines: false, sourceRunId: preparation?.id ?? null,
+          agentModel: resolvedAgentModel, studentModel: resolvedStudentModel,
         });
       }
       setSelectedRunId(started.id);
@@ -322,7 +365,7 @@ export default function PseudoStudentPage() {
                 setSourceRun("");
                 setConcepts((current) => Math.max(current, Math.min(20, next.documents.length)));
               }}>
-                {availableWorkbenchRuns.map((run) => <option key={run.runId} value={run.runId}>{run.filenames.join(", ") || "Workbench materials"} · rev {run.revision} · {run.runId.slice(0, 8)}</option>)}
+                {availableWorkbenchRuns.map((run) => <option key={run.runId} value={run.runId}>{run.templateName || "Agent default"} · {run.filenames.join(", ") || "Workbench materials"} · rev {run.revision} · {run.runId.slice(0, 8)}</option>)}
               </select></label>}
               {course && !availableWorkbenchRuns.length && <p>No previous course material yet. Choose New course material to start a test from source files.</p>}
             </>}
@@ -330,15 +373,15 @@ export default function PseudoStudentPage() {
 
           <section>
             <h2>Workbench materials</h2>
-            <p>The test loads these materials as the course release and studies them through the Tutor workbench. Each new test also prepares separate pre- and post-exams.</p>
+            <p>The test loads these materials as the course release and studies them directly through the Tutor workbench without authoring separate held-out exams.</p>
             {reusableRuns.length > 0 && <>
               <label>Test materials<select value={preparation?.id ?? ""} onChange={(e) => setSourceRun(e.target.value)}>
-                <option value="">Use the selected Workbench materials and create new exams</option>
+                <option value="">Use the selected Workbench materials directly</option>
                 {reusableRuns.map((run) => <option key={run.id} value={run.id}>{new Date(run.createdAt).toLocaleString()} · {run.report?.conceptCount ?? run.config.concepts} concepts · {run.id.slice(0, 8)}</option>)}
               </select></label>
               {preparation
-                ? <p>This repeats the practice questions and held-out exams from the selected test.</p>
-                : <p>New pre- and post-exams are written from the selected materials. The pre-test finishes before practice activities are counted.</p>}
+                ? <p>This repeats the frozen concept subset and practice materials from the selected test.</p>
+                : <p>Practice activities start directly from the selected materials (no pre- or final-test generation).</p>}
             </>}
             {!preparation && <>
               <div className="eval-fields-three eval-run-controls">
@@ -350,11 +393,15 @@ export default function PseudoStudentPage() {
 
           <section>
             <h2>Expert, Tutor, and Assessing</h2>
-            <p>The Expert template is applied when this test asks the Workbench Expert to write a lesson or question, including Backend default. The Tutor template is sent with each activity. The Assessing template is the default for this test's session.</p>
+            <p>{expertLocked ? "The Expert template stays with the selected generation." : "The Expert template is applied when this test asks the Workbench Expert to write a lesson or question, including Backend default."} The Tutor template is sent with each activity. The Assessing template is the default for this test's session.</p>
             <div className="eval-fields-three">
-              {agentRoles.map((role) => <label key={role.id}>{role.label}<select value={selected[role.id]} onChange={(e) => setSelected({ ...selected, [role.id]: e.target.value })}>
-                <option value="">Backend default</option>{templates.filter((template) => template.agent === role.id).map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-              </select></label>)}
+              {agentRoles.map((role) => {
+                const locked = role.id === "expert" && expertLocked;
+                const value = locked ? lockedExpertTemplate?.id || "" : selected[role.id];
+                return <label key={role.id}>{role.label}<select value={value} disabled={locked} title={locked ? "The Expert template comes from the selected generation." : undefined} onChange={(e) => setSelected({ ...selected, [role.id]: e.target.value })}>
+                  <option value="">{locked && selectedWorkbenchRun?.templateName && !lockedExpertTemplate ? selectedWorkbenchRun.templateName : "Backend default"}</option>{templates.filter((template) => template.agent === role.id).map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                </select></label>;
+              })}
             </div>
             <p>Missing a template? Create it in <Link href="/workbench/expert/edit">Edit agent</Link>, then refresh this page.</p>
           </section>
@@ -376,12 +423,28 @@ export default function PseudoStudentPage() {
             <h2>Test options</h2>
             <div className="eval-fields-three eval-run-controls">
               <label>Student simulator<select value={simulator} onChange={(e) => setSimulator(e.target.value)}>
-                <option value="controlled">Controlled answers</option>
                 <option value="belief">Belief-based pilot</option>
+                <option value="controlled">Controlled answers</option>
               </select></label>
               <label>Activities per learner<input type="number" min="2" max="12" value={activities} onChange={(e) => setActivities(Number(e.target.value))} /></label>
             </div>
-            <p>{selectedLearners.length} learners, one workbench session each. {!preparation && "Limit: 80 preparation calls per concept. "}Limit: {episodeCallLimit} calls per episode. Model calls may incur charges.</p>
+            <div className="eval-fields-three eval-run-controls">
+              <label>Agent model<select value={agentModel} onChange={(e) => setAgentModel(e.target.value)}>
+                <option value="configured">Backend / template default</option>
+                {availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}
+                <option value="__custom__">Custom model ID…</option>
+              </select></label>
+              <label>Student model<select value={studentModel} onChange={(e) => setStudentModel(e.target.value)}>
+                <option value="configured">Learner profile / backend default</option>
+                {availableModels.map((model) => <option key={model.id} value={model.id}>{model.id}</option>)}
+                <option value="__custom__">Custom model ID…</option>
+              </select></label>
+            </div>
+            {(agentModel === "__custom__" || studentModel === "__custom__") && <div className="eval-fields-three eval-run-controls">
+              {agentModel === "__custom__" && <label>Custom agent model ID<input value={customAgentModel} onChange={(e) => setCustomAgentModel(e.target.value)} placeholder="e.g. openai/gpt-6-luna" maxLength={200} /></label>}
+              {studentModel === "__custom__" && <label>Custom student model ID<input value={customStudentModel} onChange={(e) => setCustomStudentModel(e.target.value)} placeholder="e.g. google/gemini-2.5-flash" maxLength={200} /></label>}
+            </div>}
+            <p>{selectedLearners.length} learners, one workbench session each. Limit: {episodeCallLimit} calls per episode. Model calls may incur charges.</p>
             <p>Counts are simulated learning activities, not mouse clicks. Prerequisites outside the prepared subset are omitted.</p>
             <button type="submit" className="expert-button primary eval-start" disabled={!canStart}>
               {running ? "Starting test…" : "Start test"}
@@ -400,6 +463,7 @@ export default function PseudoStudentPage() {
               <article className="eval-saved" key={visibleRun.id}>
               <strong>{visibleRun.course} · {visibleRun.material}</strong>
               <p>Student simulator · {visibleRun.config.simulator === "belief" ? "Belief-based pilot" : "Controlled answers"}</p>
+              {(visibleRun.config.agentModel && visibleRun.config.agentModel !== "configured") || (visibleRun.config.studentModel && visibleRun.config.studentModel !== "configured") ? <p>Models · Agents: {visibleRun.config.agentModel && visibleRun.config.agentModel !== "configured" ? visibleRun.config.agentModel : "Backend default"} · Student: {visibleRun.config.studentModel && visibleRun.config.studentModel !== "configured" ? visibleRun.config.studentModel : "Profile / backend default"}</p> : null}
               {visibleRun.releaseVersion && visibleRun.materialSource === "published" && <p>Published course version {visibleRun.releaseVersion} · Workbench materials</p>}
               {visibleRun.materialSource === "combined" && <p>Published course version {visibleRun.releaseVersion} + Workbench run {visibleRun.workbenchRunId?.slice(0, 8) || "unknown"}{visibleRun.workbenchRevision != null ? ` · revision ${visibleRun.workbenchRevision}` : ""}</p>}
               {visibleRun.materialSource === "workbench_generated" && <p>Workbench generation {visibleRun.workbenchRunId?.slice(0, 8) || "unknown"}{visibleRun.releaseVersion != null && ` · revision ${visibleRun.releaseVersion}`}</p>}
@@ -415,7 +479,7 @@ export default function PseudoStudentPage() {
                 {visibleRun.report.preparationUsage.usageComplete === false && <p>Provider usage may be incomplete because a model request had to be retried.</p>}
                 {visibleRun.report.scopeWarnings.map((warning) => <p key={warning}>{warning}</p>)}
                 {visibleRun.report.episodes.map((episode, index) => <div key={index}>
-                  <p><strong>{episode.learnerName} · {episode.baseline.replaceAll("_", " ")}:</strong> {episode.status}{episode.metrics ? ` · pre ${(episode.metrics.preScore * 100).toFixed(0)}%, post ${(episode.metrics.postScore * 100).toFixed(0)}% · ${episode.metrics.calls} calls · cost ${episode.metrics.costUsd == null ? "unknown" : `$${episode.metrics.costUsd.toFixed(4)}`}` : episode.errorType ? ` (${episode.errorType})` : ""}</p>
+                  <p><strong>{episode.learnerName} · {episode.baseline.replaceAll("_", " ")}:</strong> {episode.status}{episode.metrics ? `${episode.metrics.preScore != null ? ` · pre ${(episode.metrics.preScore * 100).toFixed(0)}%` : ""}${episode.metrics.postScore != null ? ` · post ${(episode.metrics.postScore * 100).toFixed(0)}%` : ""} · ${episode.metrics.calls} calls · cost ${episode.metrics.costUsd == null ? "unknown" : `$${episode.metrics.costUsd.toFixed(4)}`}` : episode.errorType ? ` (${episode.errorType})` : ""}</p>
                   {episode.metrics?.simulationPolicyAgreement != null && <p>Simulator followed its configured answer policy {(episode.metrics.simulationPolicyAgreement * 100).toFixed(0)}% of the time.{episode.profileControlValid === false && " This episode did not meet the 75% protocol threshold; interpret its scores with caution."}</p>}
                 </div>)}
               </>}

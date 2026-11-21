@@ -82,9 +82,21 @@ class LearnerProfileInput(BaseModel):
 
 
 class TestOptions(BaseModel):
-    simulator: Literal["controlled", "belief"] = "controlled"
+    simulator: Literal["controlled", "belief"] = "belief"
     concepts: int = Field(default=1, ge=1, le=20)
     activities: int = Field(default=2, ge=2, le=12)
+    agentModel: str = Field(default="configured", min_length=1, max_length=200)
+    studentModel: str = Field(default="configured", min_length=1, max_length=200)
+
+    @field_validator("agentModel", "studentModel", mode="before")
+    @classmethod
+    def normalize_model(cls, value):
+        if value is None:
+            return "configured"
+        if isinstance(value, str):
+            trimmed = value.strip()
+            return trimmed or "configured"
+        return value
 
 
 

@@ -15,7 +15,7 @@ from learnloop.evaluation.artifacts import (
     thaw,
 )
 from learnloop.evaluation.provider import usage
-from learnloop.evaluation.schema import EXPERTS, ExamDraft, ExamItem, Screening, Unit
+from learnloop.evaluation.schema import EXPERTS, ExamDraft, ExamItem, PostExamDraft, Screening, Unit
 from learnloop.evaluation.variants import EXPERT, instruction
 
 
@@ -63,10 +63,11 @@ def reviewed_generation(unit, provider, role, prompt, context, output, path):
     return candidate, receipt
 
 
-def validate_exams(unit, payload):
+def validate_exams(unit, payload, require_pre=True):
     ids = {c.id for c in unit.graph.concepts}
     prompts, keys = set(), set()
-    for phase in ("pre", "post"):
+    phases = ("pre", "post") if require_pre or payload.get("pre") else ("post",)
+    for phase in phases:
         coverage = set()
         for raw in payload[phase]:
             item = ExamItem.model_validate(raw)
@@ -84,13 +85,20 @@ def validate_exams(unit, payload):
             raise ValueError("Each exam must cover every concept at all three levels")
 
 
-def author_exams(unit, provider, destination):
+def author_exams(unit, provider, destination, include_pre=True):
     result = {
         "unitHash": digest(unit.model_dump()),
         "pre": [],
         "post": [],
         "mode": "workflow_only" if provider.offline else "live",
     }
+    phases = ("pre", "post") if include_pre else ("post",)
+    prompt = (
+        "Author two independent exams: pre and post, each with one Basic, Intermediate and Advanced question for this concept. Use new prompts, cases and numbers for each exam. Provide source-backed rubrics/reference answers as requested. These are held-out tests, never teaching resources. Do not reveal or reuse test content outside this task."
+        if include_pre
+        else "Author one independent post exam with one Basic, Intermediate and Advanced question for this concept. Use new prompts, cases and numbers. Provide source-backed rubrics/reference answers as requested. This is a held-out final test, never a teaching resource. Do not reveal or reuse test content outside this task."
+    )
+    output_model = ExamDraft if include_pre else PostExamDraft
     for concept in unit.graph.concepts:
         passages = [
             p.model_dump() for p in unit.passages if p.id in {s.chunkId for s in concept.sources}
@@ -99,15 +107,15 @@ def author_exams(unit, provider, destination):
             unit,
             provider,
             "TestAuthor",
-            "Author two independent exams: pre and post, each with one Basic, Intermediate and Advanced question for this concept. Use new prompts, cases and numbers for each exam. Provide source-backed rubrics/reference answers as requested. These are held-out tests, never teaching resources. Do not reveal or reuse test content outside this task.",
+            prompt,
             {
                 "concept": concept.model_dump(),
                 "passages": [{"chunkId": p["id"], "text": p["text"]} for p in passages],
             },
-            ExamDraft,
+            output_model,
             destination.parent / "drafts" / "exams" / f"{storage_name(concept.id)}.json",
         )
-        for phase in ("pre", "post"):
+        for phase in phases:
             for question in getattr(draft, phase):
                 result[phase].append(
                     {
@@ -116,7 +124,7 @@ def author_exams(unit, provider, destination):
                         "question": question.model_dump(),
                     }
                 )
-    validate_exams(unit, result)
+    validate_exams(unit, result, require_pre=include_pre)
     result["usage"] = usage(provider.calls)
     return freeze(destination, result)
 

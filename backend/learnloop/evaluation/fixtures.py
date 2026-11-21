@@ -31,6 +31,7 @@ from learnloop.evaluation.schema import (
     ExamDraft,
     LearningUpdate,
     MixedStudentReply,
+    PostExamDraft,
     StudentReply,
 )
 
@@ -162,6 +163,13 @@ class FixtureProvider:
                     ]
                     for phase in ("pre", "post")
                 }
+            )
+        if output is PostExamDraft:
+            return PostExamDraft(
+                post=[
+                    question(context["concept"], context["passages"][0], level, "post")
+                    for level in ("basic", "intermediate", "advanced")
+                ]
             )
         if output is PlanChoice:
             return PlanChoice(

@@ -63,3 +63,86 @@ def test_concept_count_can_exceed_previous_global_cap_and_deep_graph_is_iterativ
             ],
         }
     )
+
+
+def test_section_grounding_retries_cyclic_graph_and_invalid_source():
+    from learnloop.agents.grounding import generate_grounded
+    from learnloop.core.schemas import GroundingReview, SectionGraph
+
+    attempts = []
+
+    class Services:
+        def generate(self, role, instruction, context, output):
+            if output is GroundingReview:
+                return GroundingReview(status="supported", summary="Supported.")
+            attempts.append(context.get("sourceReviewFeedback"))
+            if len(attempts) == 1:
+                return SectionGraph.model_validate(
+                    {
+                        "concepts": [
+                            {
+                                "id": "a",
+                                "title": "Concept A",
+                                "summary": "First concept from s0.",
+                                "sources": [{"chunkId": "s0", "quote": "First concept text."}],
+                            },
+                            {
+                                "id": "b",
+                                "title": "Concept B",
+                                "summary": "Second concept from s0.",
+                                "sources": [{"chunkId": "s0", "quote": "Second concept text."}],
+                            },
+                        ],
+                        "prerequisites": [
+                            {
+                                "prerequisite": "a",
+                                "dependent": "b",
+                                "source": {"chunkId": "s0", "quote": "Concept B uses Concept A directly."},
+                            },
+                            {
+                                "prerequisite": "b",
+                                "dependent": "a",
+                                "source": {"chunkId": "s0", "quote": "Concept A uses Concept B directly."},
+                            },
+                        ],
+                    }
+                )
+            return SectionGraph.model_validate(
+                {
+                    "concepts": [
+                        {
+                            "id": "a",
+                            "title": "Concept A",
+                            "summary": "First concept from s0.",
+                            "sources": [{"chunkId": "s0", "quote": "First concept text."}],
+                        },
+                        {
+                            "id": "b",
+                            "title": "Concept B",
+                            "summary": "Second concept from s0.",
+                            "sources": [{"chunkId": "s0", "quote": "Second concept text."}],
+                        },
+                    ],
+                    "prerequisites": [
+                        {
+                            "prerequisite": "a",
+                            "dependent": "b",
+                            "source": {"chunkId": "s0", "quote": "Concept B uses Concept A directly."},
+                        }
+                    ],
+                }
+            )
+
+    result, receipt = generate_grounded(
+        Services(),
+        "Expert",
+        "extract",
+        {"passages": [{"chunkId": "s0", "page": 1, "text": "First concept text. Second concept text."}]},
+        SectionGraph,
+        {"s0": {"text": "First concept text. Second concept text."}},
+    )
+    assert len(attempts) == 2
+    assert "cycle" in str(attempts[1]).lower()
+    assert len(result.prerequisites) == 1
+    assert receipt["status"] == "supported"
+

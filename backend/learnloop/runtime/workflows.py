@@ -40,6 +40,14 @@ class PromptConfiguredServices:
         "PostLesson": ("lesson",),
     }
 
+    NON_GENERATION_OUTPUTS = {
+        "SlideTranscription",
+        "GroundingReview",
+        "LessonScopeReview",
+        "QuestionKeyCheck",
+        "SolvedQuestion",
+    }
+
     def __init__(
         self, services, template, retry_feedback=None, model_recorder=None, stop_check=None,
         expert_template=None,
@@ -84,7 +92,12 @@ class PromptConfiguredServices:
 
     def generate(self, role, instruction, context, output, *, image_png=None):
         self._stop_check()
-        if self._retry_feedback and role == "Expert":
+        if (
+            self._retry_feedback
+            and role == "Expert"
+            and image_png is None
+            and output.__name__ not in self.NON_GENERATION_OUTPUTS
+        ):
             context = dict(context)
             context["previousRunFailure"] = self._retry_feedback
             instruction += (

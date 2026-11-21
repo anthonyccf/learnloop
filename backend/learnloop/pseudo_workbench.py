@@ -15,7 +15,6 @@ from learnloop.evaluation.artifacts import checkpoint, digest, freeze, runtime_h
 from learnloop.evaluation.belief_student import BeliefStudent
 from learnloop.evaluation.metrics import episode_metrics, latency_by_role
 from learnloop.evaluation.provider import BudgetExhausted, Provider, usage
-from learnloop.evaluation.runner import exam
 from learnloop.evaluation.simulator import Student
 from learnloop.persistence.database import (
     AgentTemplate,
@@ -189,13 +188,15 @@ class WorkbenchServices:
         self.source_course_id = source_course_id
         self.provider = None
         self.learner = None
+        self.agent_model = None
         self.last_resolved_model = None
         self.last_generation_usage = None
         self._live_services = None
 
-    def bind(self, provider, learner):
+    def bind(self, provider, learner, agent_model=None):
         self.provider = provider
         self.learner = learner
+        self.agent_model = agent_model if agent_model and agent_model != "configured" else None
 
     def close(self):
         vectors = getattr(self._live_services, "vectors", None)
@@ -218,6 +219,8 @@ class WorkbenchServices:
                 learner_model = self.learner.get("model")
                 if learner_model and learner_model != "configured":
                     requested = learner_model
+            elif role != "Simulator" and not requested and self.agent_model:
+                requested = self.agent_model
             if requested:
                 provider.model = requested
             # Live Services omits temperature unless a template specifies one.
@@ -234,8 +237,6 @@ class WorkbenchServices:
                         16000
                         if output.__name__ in ("DifficultyMaterials", "PyramidMaterials")
                         else 6000
-                        if role == "Expert"
-                        else 2500
                     )
                     result = provider.generate(
                         role,
@@ -532,6 +533,36 @@ def answer_body(activity, reply):
     return body
 
 
+class SimulatorProvider:
+    """Route Simulator calls to the selected pseudo-student model without altering agent calls."""
+
+    def __init__(self, base, model):
+        self.base = base
+        self.model_override = model if model and model != "configured" else None
+
+    def __getattr__(self, name):
+        return getattr(self.base, name)
+
+    def generate(self, role, prompt, context, output, **kwargs):
+        if role != "Simulator":
+            return self.base.generate(role, prompt, context, output, **kwargs)
+        old_model = self.base.model
+        try:
+            if self.model_override:
+                self.base.model = self.model_override
+            for attempt in range(3):
+                try:
+                    return self.base.generate(role, prompt, context, output, **kwargs)
+                except ValueError as error:
+                    if attempt == 2 or not (
+                        str(error) == "Incomplete evaluation model output"
+                        or error.__class__.__name__ == "ValidationError"
+                    ):
+                        raise
+        finally:
+            self.base.model = old_model
+
+
 def drive_episode(
     session, unit, exams, artifact, variants, learner, config, provider, root, student_spec
 ):
@@ -557,7 +588,12 @@ def drive_episode(
     }
     root.mkdir(parents=True, exist_ok=True)
     write(root / "manifest.json", identity)
-    session.services.bind(provider, learner)
+    agent_model = student_spec.get("agentModel") or "configured"
+    student_model = student_spec.get("model")
+    if not student_model or student_model == "configured":
+        student_model = learner.get("model") or "configured"
+    session.services.bind(provider, learner, agent_model=agent_model)
+    sim_provider = SimulatorProvider(provider, student_model)
     at = datetime.now(UTC)
     evidence, trace, predicted = {}, [], set()
     violations = {
@@ -580,7 +616,7 @@ def drive_episode(
     }
     try:
         if belief_mode:
-            student.initialize_beliefs(artifact["materials"], provider)
+            student.initialize_beliefs(artifact["materials"], sim_provider)
         initial_hidden = student.snapshot()
         watched = getattr(session, "run_path", None)
 
@@ -608,7 +644,7 @@ def drive_episode(
 
         if watched:
             raise_if_stopped(watched)
-        pre = exam(exams, "pre", student, provider, at, on_progress=track_exam("pre"))
+        pre = []
         if watched:
             raise_if_stopped(watched)
             checkpoint(
@@ -691,7 +727,7 @@ def drive_episode(
                 **({"blankIds": activity["blankIds"]} if activity.get("blankIds") else {}),
             }
             before = (view.get("evidenceStates") or {}).get(concept_id, {}).get(level, "unassessed")
-            reply, elapsed = student.respond(provider, concept_id, question, "train", at, lesson)
+            reply, elapsed = student.respond(sim_provider, concept_id, question, "train", at, lesson)
             hint_text = None
             if reply.hintRequested:
                 hinted = session.client.post(
@@ -714,7 +750,7 @@ def drive_episode(
                     raise BudgetExhausted("Evaluation call/token reservation limit reached")
                 if hint_text:
                     revised, extra = student.respond(
-                        provider, concept_id, question, "train", at, lesson, hint_text
+                        sim_provider, concept_id, question, "train", at, lesson, hint_text
                     )
                     reply, elapsed = revised, elapsed + extra
             at += timedelta(milliseconds=elapsed)
@@ -741,7 +777,7 @@ def drive_episode(
             if assessment.get("misconceptions"):
                 predicted.add(concept_id)
             student.learn(
-                provider,
+                sim_provider,
                 concept_id,
                 level,
                 reply,
@@ -788,7 +824,7 @@ def drive_episode(
                     "trace": trace,
                 },
             )
-        post = exam(exams, "post", student, provider, at, on_progress=track_exam("post"))
+        post = []
         if runtime_hash() != identity["runtimeHash"]:
             raise ValueError("Runtime source changed during held-out scoring")
         result.update(

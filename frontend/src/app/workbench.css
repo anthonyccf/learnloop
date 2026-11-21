@@ -233,6 +233,8 @@
 .eval-form p, .eval-panel p { color: var(--workbench-muted); font-size: 12px; line-height: 1.5; }
 .eval-form label, .eval-panel label { display: grid; gap: 6px; font-weight: 600; font-size: 12px; }
 .eval-form input:not([type=checkbox]):not([type=radio]), .eval-form select, .eval-panel select, .eval-panel input:not([type=checkbox]) { width: 100%; min-height: 38px; border: 1px solid #cbd6e2; border-radius: 6px; padding: 8px; background: white; color: var(--workbench-ink); font: inherit; }
+.eval-form select:disabled, .eval-form input:not([type=checkbox]):not([type=radio]):disabled { background: #f1f4f8; color: #8b97a6; border-color: #d7dee7; cursor: not-allowed; }
+.eval-form label:has(select:disabled) { color: #8b97a6; }
 .eval-run-controls { margin: 14px 0; }
 .eval-run-mode { margin-top: 14px; }
 .eval-material-choices { display: grid; gap: 8px; margin: 12px 0; }

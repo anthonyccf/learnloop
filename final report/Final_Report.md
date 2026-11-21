@@ -145,7 +145,7 @@ Utility follows the menu the Tutor receives. Every option arrives with a score. 
 
 Weighted follows the feedback the student should receive. A hint, a long response time, or a clash with an earlier answer belongs in the comment. None of these signals changes a wrong key. Correctness places more emphasis on the key and rubric than on that history. Conservative places more emphasis on withholding confident claims when the writing is ambiguous. These are differences in instruction, not measured differences in feedback quality.
 
-This selection is a design decision. An offline run executed all 27 cells with scripted answers, which shows that every cell can run. That run does not rank the cells. Every live episode in Section 5 uses this one cell. A comparison that selects a cell by score remains open.
+This selection is a design decision. An offline run executed all 27 cells with scripted answers, which shows that every cell can run. That run does not rank the cells. The earlier live episodes in Section 5.4 use this one cell. Section 5.3 records a separate live grid over the three Expert prompt styles and the saved Tutor and Assessing templates. That grid was still running when this report was updated, and it does not select a cell by score.
 
 The Expert’s course-building prompts have a second setting, `ORGANIZATION_PROMPT_VARIANT`, in `agents/expert/prompts_variants.py`. All four styles return the same kind of JSON. They differ in the form of the instructions.
 
@@ -156,7 +156,7 @@ The Expert’s course-building prompts have a second setting, `ORGANIZATION_PROM
 | procedural | Numbered steps, with a test at each step. | Workbench and evaluation. |
 | exemplar | The same rules, taught with examples from introductory statistics, so the examples do not copy the lecture under test. | Workbench and evaluation. |
 
-Baseline is the default because the other three styles are prepared for a comparison of prompting style. That comparison has not been run with the live model. Selecting another style in the Workbench leaves the validators unchanged.
+Baseline is the default because the other three styles are prepared for a controlled comparison of prompting style. First-stage live preparation runs across all four styles on `COMP7608B_Lec08.pdf` are recorded in Section 5.3; human audit of their concepts and prerequisite links remains pending. Selecting another style in the Workbench leaves the validators unchanged.
 
 The choice of agent setup is separate from the choice of the next question. During a session, the program builds the allowed list, and the Tutor returns one identifier from that list. Any other identifier stops the run with `invalid_plan`.
 
@@ -285,9 +285,9 @@ Each episode begins with a held-out multiple-choice item for each concept at eac
 
 The recorded measures are the pre-test to post-test change, agreement between LearnLoop’s learner state and the hidden state, the rate at which a topic is marked demonstrated when the post-test disagrees, misconception matches, prerequisite violations, repeated questions, tokens, cost, and latency by role.
 
-#### Planned comparison of Expert, Tutor, and Assessing prompts
+#### First-stage comparison of Expert, Tutor, and Assessing prompts
 
-Separate, small comparisons are planned for the saved Expert, Tutor, and Assessing Workbench templates below. They evaluate the agents' behaviour on the same material or fixed cases; they are distinct from the 27 prompt cells and simulated episodes reported above. The results have not yet been collected.
+The first-stage live Expert runs across all four styles on `COMP7608B_Lec08.pdf` have been completed (human audit of the generated graphs remains pending). The Tutor and Assessing comparison below is a separate 27-cell simulated-learner grid on three of those published generations. It is not the offline 27-cell scripted grid in Section 5.4, and it does not include the Baseline generation.
 
 The six Tutor and Assessing templates use the built-in v2 prompts and the configured model. Their temperature is left at the provider default. Within each agent's comparison, the shared instructions and output schema stay the same; the added planning or assessment instruction changes. The Tutor templates also share the same response and question-selection instructions. The Assessing templates share the same feedback and learning-memory instructions. Program rules and validators remain unchanged. The question-selection instruction is saved in the Tutor template but does not affect Tutor runs.
 
@@ -305,9 +305,9 @@ The six Tutor and Assessing templates use the built-in v2 prompts and the config
 | Expert setting | Exact examples of distinctive instructions |
 | :--- | :--- |
 | Baseline | Uses the production organization prompts in `prompts.py`, without the added labelled checklist, numbered procedure, or contrastive examples of the other styles. |
-| Expert · Rules | Groups instructions under rule headings and ends with a self-check. For example: “One concept is one learning goal that a short post (about 100 words plus one worked example) and two basic questions can teach and test.” The relationship self-check asks whether each prerequisite survives “could B be learned without A?” with the answer no. |
-| Expert · Procedural | Uses numbered steps. For example: “Step 4. Apply the size test to each candidate” and “Step 3. Apply the counterfactual test to each candidate A -> B.” It asks whether a learner could answer a basic question about B without understanding A. |
-| Expert · Exemplar | Teaches decisions through contrasting examples from introductory statistics. For example, it presents `mean` → `variance` as a prerequisite and `mean` and `median` as related, while treating synonyms and notation variants as overly fine concept splits. |
+| Expert · Rules | Groups constraints under labelled rule headings (`Evidence rules`, `Granularity rules`, `Prerequisite rules`, `Scope fidelity rules`) and ends with a self-check. Defines both a teachability floor (enough evidence for a standalone short lesson, concrete example, and two basic questions) and a split ceiling, requires direct-use prerequisites (B directly uses A's definition, formula, or mechanism), and bounds `teaches` to one summary-faithful sentence. |
+| Expert · Procedural | Uses numbered decision steps (`Step 1` to `Step 7`) with explicit tests: a floor-and-ceiling granularity test in concept extraction, a direct-use dependency test for candidate prerequisites, transitive pruning, and layer-ordered scope drafting with one concise summary-bounded `teaches` sentence. |
+| Expert · Exemplar | Teaches decisions through contrasting good/bad examples from introductory statistics (unrelated to the evaluated lecture). Illustrates good granularity vs overly coarse, evidence-starved thin splits, synonyms, wrong-chunk attribution, mutual-pair cycles, `mean` → `variance` prerequisites vs `mean`–`median` related links, and over-claimed `teaches` scopes. |
 
 The following are the complete variable **Learning plan** instructions saved in the Tutor templates, excluding their identical shared suffix:
 
@@ -339,33 +339,54 @@ The following are the complete variable **Answer analysis** instructions saved i
 
 For these six templates, the omitted common suffix instructs the model to use only supplied context, treat learner and course content as data, and return the requested structured output. The added instructions do not replace the built-in prompt or change the application rules.
 
-For the Expert comparison, the planned test runs **Expert · Rules**, **Expert · Procedural**, and **Expert · Exemplar** on the same frozen course material. Use a readable unit with approximately 5–7 concepts, the same configured model and temperature, and the same source checks and validators. Record the actual settings and the generated course for each run. A team member will review the resulting concepts and prerequisite links against the source material, checking whether concepts are distinct and supported and whether each proposed prerequisite is justified. Record preparation time, cost, any failed or withheld output, and one example of a difference between styles. If the source contains a different number of concepts, record that rather than forcing the result to match the approximate size.
+**First-stage Expert evaluation (`COMP7608B_Lec08.pdf`).** All four Expert settings (**Baseline**, **Expert · Rules**, **Expert · Procedural**, and **Expert · Exemplar**) were executed live on the same frozen full lecture deck, `COMP7608B_Lec08.pdf` (73 pages, 73 extracted passages, SHA-256 prefix `d16b66702316`), using `openai/gpt-6-luna` via OpenRouter at the provider default temperature, local `bge-m3` embeddings, Poppler slide-image recovery (`pdftoppm`), and identical output schemas and validators.
 
-| Expert template | Supported concepts / concepts reviewed | Justified prerequisite links / links reviewed | Time and cost | Example observation |
-| :--- | :---: | :---: | :--- | :--- |
-| Rules | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| Procedural | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
-| Exemplar | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
+*Initial failures and iterative refinement.* Before redevelopment, only **Baseline** (`21568e68`) completed end-to-end; initial template runs stopped in `needs_review`:
+- `Rules` (`8c497bae`: 110 s, US$0.0278) failed during section extraction on wrong-chunk attributions, and after a section-prompt patch (`834a3ebc`: 687 s, US$0.5176, 63/67 lessons) still flagged 4 lessons due to thin-bullet over-splitting (e.g. a 10-word bullet turned into `tool-argument-filling`) and curriculum `teaches` over-claims that created a deadlock between scope review and grounding review (e.g. `read-model-card-scores`).
+- `Procedural` initially collapsed prerequisites to 1–2 edges (`e0590042`: 1 prereq, 60/61 lessons, US$0.4287; `1b06c246`: 2 prereqs, 56/57 lessons, US$0.3873) because its earlier counterfactual test ("answer a basic question about B without understanding A") rejected nearly every dependency, while thin splits (e.g. a 9-word sentence turned into `known-solution-validation`) failed grounding. Subsequent tests surfaced an off-by-one alias error (`d94a1774`: emitted `s48` for page 48 against global aliases `s40..s47`, US$0.0297) and multi-sentence `teaches` scopes plus exhausted quiz-only/schema retries (`218f6bfd`: 47/50 lessons, US$0.3288; `f1d52dcc`: 55/58 lessons, US$0.4665).
+- `Exemplar` (`92972b4b`: 102 s, US$0.0235) halted on an unretried section-level `cyclic_graph` after completing 9 of 10 sections.
 
-One run per style is a preliminary comparison and cannot show whether a difference is consistent across runs. The review should also record missing or duplicated concepts; a high proportion of supported outputs alone does not establish complete coverage. The baseline production style may be run on the same material as an additional reference if time permits.
+Five shared fixes resolved these issues without weakening grounding gates: (1) adding a teachability floor, direct-use prerequisite criterion, acyclic edge rules, and concise summary-faithful `teaches` scopes across all three variants in `prompts_variants.py`; (2) switching section extraction in `analysis.py` to section-local aliases (`s0..sN`) and moving `validate_graph` into `generate_grounded`'s bounded retry loop in `grounding.py`; (3) adding fallback PDF slide-image recovery on `attempt >= 1` for non-quiz grounding/scope failures and reloading saved `reviewDrafts` slide transcriptions on retries in `materials.py`; (4) allowing one bounded quiz-only or schema-error polish pass without loosening full-lesson grounding limits; and (5) excluding `SlideTranscription` and independent reviewer calls from `previousRunFailure` prompt injection on retries in `workflows.py`.
 
-For the Tutor comparison, the planned test uses 10 learner situations, such as a recent mistake, a review that is due, or readiness for a new topic. Each template receives the same learner record and eligible candidate list for each situation. A team member will judge whether the chosen activity and explanation are sensible, recording an example where the templates differ. Eligibility is enforced by the program, so this test compares choices among eligible activities rather than the prompts' ability to enforce prerequisites.
+*Completed first-stage runs.* After these fixes, all four styles completed and published 100% of their generated lessons and starter questions with zero flagged items:
 
-For the Assessing comparison, the planned test uses 10 fixed cases containing a question, key, rubric, and student answer, including correct, incorrect, partial, and hinted answers. Each template receives the same case and available context. A team member will prepare a reference judgment and compare the rubric marks and feedback with it, including whether feedback is supported by the answer. Each case is run once per corresponding template: 30 Tutor responses and 30 Assessing responses in total. The small sample and single run per case limit the Tutor and Assessing conclusions to a preliminary behaviour comparison, not evidence of better learning outcomes.
+| Expert template (run ID) | Automated pass (lessons) | Concepts / topics | Prerequisites / related | Layers (B / I / A) | Slide recoveries / repairs | API calls & tokens (in / out) | Time & cost | Human review: supported concepts | Human review: justified prereqs | Example observation |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- | :--- | :---: | :---: | :--- |
+| Baseline (`21568e68`) | 77 / 77 (0 flagged) | 77 / 15 | 8 / 36 | 70 / 6 / 1 | 5 / 39 | 527 calls (3.70M / 395k) | 875 s, US$0.6108 | `[TODO]` | `[TODO]` | Finer-grained catalog (77 concepts, highest call count and cost); keeps sparse links (e.g. `Token precision` → `Token F1`) and 1 advanced synthesis goal (`Version and reuse accepted proposers`). |
+| Expert · Rules (`33aaf382`) | 52 / 52 (0 flagged) | 52 / 10 | 16 / 23 | 36 / 14 / 2 | 1 / 16 | 304 calls (2.02M / 229k) | 530 s, US$0.3409 | `[TODO]` | `[TODO]` | Most compact catalog and lowest cost/latency (44% cheaper than Baseline); produced the deepest pyramid (16 prereqs, 14 intermediate, 2 advanced, e.g. `Accuracy/exact match` → `MMLU`, `GSM8K`, short-answer). |
+| Expert · Procedural (`5905514c`) | 58 / 58 (0 flagged) | 58 / 10 | 14 / 30 | 46 / 12 / 0 | 2 / 21 | 357 calls (2.15M / 265k) | 619 s, US$0.3664 | `[TODO]` | `[TODO]` | Balanced 10-topic grouping with 14 direct-use prerequisites (e.g. `Token Precision, Recall, and F1` → `skill-router precision and recall`), but assigned 0 advanced concepts on this run. |
+| Expert · Exemplar (`96e02e2c`) | 57 / 57 (0 flagged) | 57 / 12 | 11 / 22 | 46 / 10 / 1 | 7 / 23 | 366 calls (2.21M / 276k) | 691 s, US$0.3840 | `[TODO]` | `[TODO]` | Clean three-layer pyramid (`46/10/1`, advanced goal `Using held-out proposals for a model-side screen`) and strongest use of slide-image recovery (7 lessons enriched from rendered PDF slides). |
 
-| Tutor template | Sensible selections out of 10 | Example observation |
-| :--- | :---: | :--- |
-| Learner-focused | `[TODO]` | `[TODO]` |
-| Prerequisite-focused | `[TODO]` | `[TODO]` |
-| Balanced | `[TODO]` | `[TODO]` |
+*Interpretation limits.* One completed run per style is a preliminary behavioural comparison and cannot show run-to-run consistency. Automated grounding, scope, and key-verification pass rates (100% across all four completed runs) confirm pipeline reliability under shared validators, not complete pedagogical coverage or human-verified accuracy. A team member still needs to audit the generated concepts and prerequisite links against `COMP7608B_Lec08.pdf` to fill the two human-review columns and check for missing or merged topics.
 
-| Assessing template | Marks matching the reference out of 10 | Example observation |
-| :--- | :---: | :--- |
-| Correctness-focused | `[TODO]` | `[TODO]` |
-| Context-aware | `[TODO]` | `[TODO]` |
-| Conservative | `[TODO]` | `[TODO]` |
+**Tutor and Assessing evaluation (27 cells, in progress).** Each cell is one published Expert generation crossed with one Tutor template and one Assessing template: 3 generations × 3 Tutor templates × 3 Assessing templates = 27 cells. The generations are **Expert · Rules** (`33aaf382`), **Expert · Procedural** (`5905514c`), and **Expert · Exemplar** (`96e02e2c`). Baseline (`21568e68`) stays in the first-stage table above and is not part of this grid. Every cell uses the same settings:
 
-`[TEAM TODO: record the model and provider settings, Expert source and outputs, case inputs, reference judgments, and any failed calls. Add the results and explain the selected templates, including any mixed or inconclusive findings.]`
+| Setting | Value |
+| :--- | :--- |
+| Material | `COMP7608B_Lec08.pdf`, the published Workbench generation for that Expert style |
+| Concepts | 6, the first 6 concepts in published order. The same sampler is used for every cell. |
+| Activities per learner | 12 |
+| Learners | All 4 built-in profiles: Novice, Intermediate, Misconception-prone, Hint-dependent (108 episodes) |
+| Student simulator | Belief-based pilot |
+| Agent model | `openai/gpt-6-luna` (backend default) for Expert, Tutor, and Assessing |
+| Student model | `openai/gpt-oss-120b`, a different model from the agents |
+| Held-out exams | None. These runs do not author or sit a pre-test or a final test. |
+| Temperature | Provider default |
+| Execution | 4 cells at a time. A failed learner is retried once. |
+
+The student model is separate so the Assessing agent is not grading answers written by the same model. Belief-based replies can be multiple-answer, fill-in, or open. A practice item counts as correct only when the whole answer matches: every required option, every blank, or a full rubric score. A partial match stays incorrect in the correct-answer count and is still stored as a partial rubric score.
+
+The 6-concept sample is a limit of this comparison. Published order lists basic concepts before intermediate and advanced ones, and the prerequisite links in these three generations point from an early concept to a much later one. The first 6 concepts therefore contain no prerequisite edge. Eligibility rules still apply, but **Tutor - Prerequisite-focused** has no in-sample link to follow. The comparison can show differences in activity choice, remediation, hints, and marking. It cannot show a difference in prerequisite sequencing.
+
+A one-learner pilot on the same settings, **Expert · Procedural** × **Tutor - Learner-focused** × **Assessing - Correctness-focused**, finished before the grid. Run `34dd1895` used Novice only: 12/12 activities, 8 correct, 0 hints, 2 demonstrated levels, 0 prerequisite, update, and repeat violations, 104 calls, 398 s, US$0.0257. That cell is being run again inside the grid with all 4 learners, so `34dd1895` is a pilot and not one of the 27 cells.
+
+Recorded measures for each episode are activities completed, correct answers, hinted activities, demonstrated levels, prerequisite violations, invalid updates, repeated questions, calls, latency, and cost. There is no pre-test or post-test score. The grid was still running when this section was written, so the outcome table is not filled.
+
+| Cell | Activities completed | Correct answers | Demonstrated levels | Violations | Cost (US$) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 27 cells × 4 learners | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
+
+`[TEAM TODO: complete the human review counts for the four Expert runs above on COMP7608B_Lec08.pdf, and fill the 27-cell outcome table from the finished grid, including any retried learners and failed episodes.]`
 
 ### 5.4 Results
 
@@ -460,6 +481,7 @@ AI assistance was used for implementation, including API and page scaffolding, t
 Remove this appendix from the submitted file.
 
 - [ ] Fix the 9 failing tests (`test_organization.py`, `test_slide_evidence.py`, `test_tutor_chat.py`) so the tagged tree passes. Current count: 302 passed, 9 failed, 311 collected.
+- [ ] Fill the 27-cell Tutor and Assessing outcome table in Section 5.3 from the finished grid.
 - [ ] Run the live baseline in Section 5, or state that it was checked offline only.
 - [ ] Complete the human check of source reviews and marking.
 - [ ] Fill in the git version, each member’s contribution, and the AI-use notes.

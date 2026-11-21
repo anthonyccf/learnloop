@@ -52,6 +52,10 @@ class ExamDraft(StrictModel):
     post: list[Question] = Field(min_length=3, max_length=3)
 
 
+class PostExamDraft(StrictModel):
+    post: list[Question] = Field(min_length=3, max_length=3)
+
+
 class StudentReply(StrictModel):
     choiceId: Literal["a", "b", "c", "d"]
     reasoning: str = Field(min_length=1, max_length=600)

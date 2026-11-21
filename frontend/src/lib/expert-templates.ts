@@ -5,9 +5,9 @@ export type OrganizationVariant = "baseline" | "rules" | "procedural" | "exempla
 
 export const organizationVariants: { id: OrganizationVariant; label: string; description: string }[] = [
   { id: "baseline", label: "Baseline · production", description: "Direct instructions for extracting concepts, reviewing relationships and planning the curriculum." },
-  { id: "rules", label: "Rules · checklist", description: "Groups constraints into rules and adds self-checks. Defines concept size using a short lesson and two questions." },
-  { id: "procedural", label: "Procedural · step by step", description: "Uses ordered steps and explicit tests, including a lesson-size test and a counterfactual prerequisite test." },
-  { id: "exemplar", label: "Exemplar · contrastive examples", description: "Shows good and bad decisions using examples from introductory statistics." },
+  { id: "rules", label: "Rules · checklist", description: "Declarative rule blocks with self-checks enforcing teachability bounds, chunk-level evidence, direct-use prerequisites, and summary-faithful curriculum scopes." },
+  { id: "procedural", label: "Procedural · step by step", description: "Ordered step-by-step procedure with floor-and-ceiling concept tests, direct-use dependency checks, and summary-bounded curriculum drafting." },
+  { id: "exemplar", label: "Exemplar · contrastive examples", description: "Contrastive good and bad examples from introductory statistics covering concept granularity, chunk fidelity, prerequisites, and faithful curriculum scopes." },
 ];
 
 export const basePromptVersions: { id: BasePromptVersion; label: string; description: string }[] = [

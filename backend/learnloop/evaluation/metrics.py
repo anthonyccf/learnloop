@@ -29,8 +29,8 @@ def episode_metrics(
     violations,
     post_target,
 ):
-    before = statistics.mean(x["score"] for x in pre)
-    after = statistics.mean(x["score"] for x in post)
+    before = statistics.mean(x["score"] for x in pre) if pre else None
+    after = statistics.mean(x["score"] for x in post) if post else None
     scores = {(x["conceptId"], x["difficulty"]): x["score"] for x in post}
     truth, predictions = [], []
     demonstrated, false = 0, 0
@@ -41,9 +41,12 @@ def episode_metrics(
             truth.append(hidden_labels[c["id"]][level])
             if state == "demonstrated":
                 demonstrated += 1
-                false += scores[(c["id"], level)] < 1
-    mastered = sum(
-        scores[(c["id"], c.get("targetDifficulty", "intermediate"))] >= 1 for c in concepts
+                if post:
+                    false += scores[(c["id"], level)] < 1
+    mastered = (
+        sum(scores[(c["id"], c.get("targetDifficulty", "intermediate"))] >= 1 for c in concepts)
+        if post
+        else None
     )
     detected, actual = set(predicted_misconceptions), set(hidden_misconceptions)
     tp = len(detected & actual)
@@ -51,14 +54,20 @@ def episode_metrics(
     return {
         "preScore": before,
         "postScore": after,
-        "gain": after - before,
-        "gainPerActivity": (after - before) / activities if activities else None,
+        "gain": after - before if before is not None and after is not None else None,
+        "gainPerActivity": (
+            (after - before) / activities
+            if before is not None and after is not None and activities
+            else None
+        ),
         "postTestMasteredConcepts": mastered,
         "activities": activities,
-        "activitiesAtVerifiedTarget": activities if after >= post_target else None,
+        "activitiesAtVerifiedTarget": (
+            activities if after is not None and after >= post_target else None
+        ),
         "stateMacroF1": macro_f1(truth, predictions),
         "difficultyStateAccuracy": sum(a == b for a, b in zip(truth, predictions)) / len(truth),
-        "falseDemonstrationRate": false / demonstrated if demonstrated else None,
+        "falseDemonstrationRate": false / demonstrated if post and demonstrated else None,
         "demonstratedEstimates": demonstrated,
         "misconceptionPrecision": tp / len(detected) if detected else None,
         "misconceptionRecall": tp / len(actual) if actual else None,
@@ -117,6 +126,8 @@ def analyze(results):
         for other, candidate in summaries.items():
             if other == key:
                 continue
+            if item["postScore"] is None or candidate["postScore"] is None:
+                continue
             a = (
                 item["postScore"],
                 -(item["inputTokens"] + item["outputTokens"]),
@@ -148,7 +159,7 @@ def analyze(results):
         for cell in cells
     )
     effects = {}
-    if balanced:
+    if balanced and all(r["metrics"].get("gain") is not None for r in factorial):
         grand = statistics.mean(r["metrics"]["gain"] for r in factorial)
         factors = ("expert", "tutor", "assessor")
         for size in (1, 2, 3):

@@ -275,6 +275,8 @@ def build_router(context: ApiContext):
                 Run.input["hierarchy_ready"].as_boolean(),
                 Run.input["published_release_id"].as_string(),
                 Run.snapshot["status"].as_string(),
+                Run.input["prompt_template"]["name"].as_string(),
+                Run.input["prompt_template"]["id"].as_string(),
                 RunHierarchy.documents,
             ).outerjoin(
                 RunHierarchy, RunHierarchy.run_id == Run.id
@@ -284,7 +286,7 @@ def build_router(context: ApiContext):
                 Run.snapshot["workflow"].as_string() == "course_preparation",
             )
             items = []
-            for run_id, created, filenames, revision, ready, published, status, documents in db.execute(query):
+            for run_id, created, filenames, revision, ready, published, status, template_name, template_id, documents in db.execute(query):
                 if revision or run_id in legacy:
                     release_id = published or legacy.get(run_id)
                     items.append(
@@ -300,6 +302,8 @@ def build_router(context: ApiContext):
                             "ready": bool(ready and status == "completed"),
                             "releaseId": release_id,
                             "published": bool(release_id),
+                            "templateName": template_name,
+                            "templateId": template_id,
                         }
                     )
             return sorted(items, key=lambda i: i["createdAt"], reverse=True)

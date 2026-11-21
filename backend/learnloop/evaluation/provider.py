@@ -95,7 +95,7 @@ class Provider:
         limit = (
             max_tokens
             if max_tokens is not None
-            else (16000 if role in ("Expert", "TestAuthor") else 3000)
+            else (16000 if role in ("Expert", "TestAuthor") else 8000)
         )
         system = (
             system_prompt

@@ -37,7 +37,8 @@ def inputs(path, learner_id, condition, settings):
         or digest(artifact) != manifest["resourceHash"]
     ):
         raise ValueError("Frozen evaluation materials changed")
-    validate_exams(unit, exams)
+    if exams.get("pre") or exams.get("post"):
+        validate_exams(unit, exams, require_pre=False)
     return setup, learner, root, manifest, config, unit, exams, artifact
 
 

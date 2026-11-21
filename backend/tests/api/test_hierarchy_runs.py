@@ -1,8 +1,10 @@
 """Run-owned Expert hierarchy regressions using the actual worker and test provider."""
 
+from uuid import uuid4
+
 from sqlalchemy import select
 
-from learnloop.persistence.database import CourseRelease, Run
+from learnloop.persistence.database import CourseRelease, Run, RunHierarchy
 from learnloop.runtime.worker import work_once
 from tests.conftest import COURSE_TEXT
 
@@ -149,3 +151,40 @@ def test_distinct_materials_extend_parent_and_retry_without_rereading(stack, mon
     assert work_once(factory, services)
     assert [c["title"] for c in client.get(f"{path}/{fresh}").json()["concepts"]] == ["Statistics"]
     assert reads[-1] == "Statistics"
+
+
+def test_saved_hierarchies_include_the_expert_prompt_template(stack):
+    client, factory, _, _ = stack
+    course = client.post("/api/courses", json={"title": "Template labels"}).json()["id"]
+    named, plain = str(uuid4()), str(uuid4())
+    with factory.begin() as db:
+        db.add_all([
+            Run(
+                id=named, course_id=course, owner_id="test-owner",
+                input={
+                    "hierarchy_revision": 2,
+                    "hierarchy_ready": True,
+                    "hierarchy_filenames": ["notes.pdf"],
+                    "prompt_template": {"id": "procedural", "name": "Expert · Procedural"},
+                },
+                snapshot={"workflow": "course_preparation", "status": "completed"},
+            ),
+            RunHierarchy(
+                run_id=named, ready=True, graph={"concepts": [], "topics": []},
+                documents=[{"id": "doc-1", "filename": "notes.pdf"}],
+            ),
+            Run(
+                id=plain, course_id=course, owner_id="test-owner",
+                input={"hierarchy_revision": 1, "hierarchy_ready": True, "hierarchy_filenames": ["plain.pdf"]},
+                snapshot={"workflow": "course_preparation", "status": "completed"},
+            ),
+            RunHierarchy(
+                run_id=plain, ready=True, graph={"concepts": [], "topics": []},
+                documents=[{"id": "doc-2", "filename": "plain.pdf"}],
+            ),
+        ])
+    listed = {item["runId"]: item for item in client.get(f"/api/courses/{course}/hierarchy-runs").json()}
+    assert listed[named]["templateName"] == "Expert · Procedural"
+    assert listed[named]["templateId"] == "procedural"
+    assert listed[plain]["templateName"] is None
+    assert listed[plain]["templateId"] is None
