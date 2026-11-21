@@ -106,7 +106,8 @@ def inspection_snapshots(db, run):
     """Freeze the selected documents without storing their embedding vectors."""
     views = {}
     for document_id in run.input.get("_inspection_document_ids", []):
-        doc = db.get(Document, document_id)
+        from learnloop.persistence.run_materials import document_for
+        doc = document_for(db, run.id, document_id)
         if not doc or doc.course_id != run.course_id:
             continue
         chunks = list(
@@ -163,6 +164,9 @@ def inspection_record_fingerprints(view):
 def emit(db, run_id: str, event_type: str, payload: dict):
     run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
     db.refresh(run)
+    if run.input.get("_stop_requested") and not (event_type == "run.status" and payload.get("status") == "stopped"):
+        from learnloop.runtime.cancellation import RunStopped
+        raise RunStopped()
     snapshot = copy.deepcopy(run.snapshot)
     sequence = snapshot["lastSequence"] + 1
     event = {
@@ -255,7 +259,7 @@ def emit(db, run_id: str, event_type: str, payload: dict):
     run.snapshot = snapshot
     if (
         event_type == "run.status"
-        and payload["status"] in ("completed", "failed", "needs_review", "paused")
+        and payload["status"] in ("completed", "failed", "needs_review", "paused", "stopped")
         and snapshot["workflow"] == "course_preparation"
     ):
         # Freeze the selected documents at the checkpoint. Older runs have no

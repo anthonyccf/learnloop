@@ -5,10 +5,11 @@ import copy
 from sqlalchemy import select
 
 from learnloop.agents.expert.organization import current_organization
-from learnloop.agents.expert.prompts import CURRICULUM_PROMPT
+from learnloop.agents.expert.prompts_variants import organization_prompt
 from learnloop.core.errors import ServiceError
 from learnloop.core.schemas import CurriculumPlan
-from learnloop.persistence.database import Course, Document, Run
+from learnloop.persistence.database import Course, Run
+from learnloop.persistence.run_materials import document_for, documents_for
 from learnloop.runtime.events import step
 
 LEVELS = {"basic": 0, "intermediate": 1, "advanced": 2}
@@ -67,13 +68,11 @@ def validate_curriculum(plan, concepts, edges):
 
 def prepare_curriculum(factory, services, run_id, document_id):
     with factory() as db:
-        anchor = db.get(Document, document_id)
+        anchor = document_for(db, run_id, document_id)
         course_id = anchor.course_id
         docs = list(
             db.scalars(
-                select(Document).where(
-                    Document.course_id == course_id, Document.status.in_(("prepared", "published"))
-                )
+                documents_for(db, run_id, course_id)
             )
         )
         concepts = sorted(
@@ -113,6 +112,7 @@ def prepare_curriculum(factory, services, run_id, document_id):
             r = db.get(Run, run_id)
             r.input = {**r.input, "curriculumDraft": copy.deepcopy(draft)}
 
+    curriculum_prompt = organization_prompt(services, "CURRICULUM_PROMPT")
     feedback = draft.get("validationFeedback")
     for attempt in range(3):
         plan = (
@@ -120,7 +120,7 @@ def prepare_curriculum(factory, services, run_id, document_id):
             or draft.get("plan")
             or services.generate(
                 "Expert",
-                CURRICULUM_PROMPT,
+                curriculum_prompt,
                 {**context, "validationFeedback": feedback},
                 CurriculumPlan,
             ).model_dump()
@@ -133,7 +133,7 @@ def prepare_curriculum(factory, services, run_id, document_id):
                 draft.get("review")
                 or services.generate(
                     "Expert",
-                    CURRICULUM_PROMPT
+                    curriculum_prompt
                     + "\nAct as an independent curriculum reviewer. Audit the proposed plan for repeated teaching scopes, misplaced layers and absent new capabilities. Return a corrected complete plan. Preserve all objectives and reviewed prerequisite pairs.",
                     {**context, "proposedPlan": plan},
                     CurriculumPlan,
@@ -161,9 +161,7 @@ def prepare_curriculum(factory, services, run_id, document_id):
         db.scalar(select(Course).where(Course.id == course_id).with_for_update())
         latest = list(
             db.scalars(
-                select(Document).where(
-                    Document.course_id == course_id, Document.status.in_(("prepared", "published"))
-                )
+                documents_for(db, run_id, course_id)
             )
         )
         current = current_organization(
@@ -178,7 +176,7 @@ def prepare_curriculum(factory, services, run_id, document_id):
             old = graph.get("curriculum", {}).get("objectives", {})
             assignments = {c["id"]: by_id[c["id"]] for c in graph["concepts"]}
             for id, assignment in assignments.items():
-                if old.get(id) != assignment:
+                if doc.id == document_id and old.get(id) != assignment:
                     graph.get("resources", {}).pop(id, None)
             graph["curriculum"] = {"version": 1, "signature": signature, "objectives": assignments}
             doc.graph = graph

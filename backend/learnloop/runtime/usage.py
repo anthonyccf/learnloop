@@ -5,14 +5,18 @@ from threading import Lock
 
 
 class UsageRecorder:
-    def __init__(self):
+    def __init__(self, on_record=None):
         self._calls = []
         self._lock = Lock()
+        self._on_record = on_record
 
     def record(self, usage):
         entry = usage if isinstance(usage, dict) else {}
+        entry = {key: entry.get(key) for key in ("inputTokens", "outputTokens", "costUsd")}
         with self._lock:
-            self._calls.append({key: entry.get(key) for key in ("inputTokens", "outputTokens", "costUsd")})
+            self._calls.append(entry)
+            if self._on_record:
+                self._on_record(entry)
 
     def calls(self):
         with self._lock:

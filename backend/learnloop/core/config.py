@@ -27,14 +27,20 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr = Field(default=SecretStr(""), validation_alias="OPENROUTER_API_KEY")
     llm_model: str = Field(default="openai/gpt-6-luna", validation_alias="OPENROUTER_MODEL")
     expert_verifier_model: str = Field(default="", validation_alias="EXPERT_VERIFIER_MODEL")
+    expert_vision_model: str = Field(default="", validation_alias="EXPERT_VISION_MODEL")
     request_timeout_seconds: int = Field(default=90, ge=1, le=300)
     max_upload_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
     max_pages: int = Field(default=200, ge=1)
     max_chunks: int = Field(default=1000, ge=1)
     worker_lease_seconds: int = Field(default=1800, ge=300)
-    worker_max_attempts: int = Field(default=6, ge=1, le=10)
+    worker_max_attempts: int = Field(default=4, ge=1, le=10)
+    worker_retry_delay_seconds: int = Field(default=20, ge=1, le=3600)
     expert_material_workers: int = Field(default=6, ge=1, le=12)
-    prompt_version: Literal["v1", "v2"] = Field(default="v1", validation_alias="PROMPT_VERSION")
+    llm_max_concurrency: int = Field(default=8, ge=1, le=64)
+    prompt_version: Literal["v1", "v2"] = Field(default="v2", validation_alias="PROMPT_VERSION")
+    organization_prompt_variant: Literal["baseline", "rules", "procedural", "exemplar"] = Field(
+        default="baseline", validation_alias="ORGANIZATION_PROMPT_VARIANT"
+    )
 
     @field_validator("database_url", mode="after")
     @classmethod

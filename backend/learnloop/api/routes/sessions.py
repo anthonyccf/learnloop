@@ -14,7 +14,7 @@ from learnloop.persistence.database import (
     Course,
     StudySession,
 )
-from learnloop.persistence.releases import get_release, pin_session
+from learnloop.persistence.releases import current_material_release, get_release, pin_session
 from learnloop.persistence.repository import course_graph, learner
 from learnloop.runtime.events import new_run
 
@@ -48,9 +48,17 @@ def build_router(context: ApiContext):
             )
             if existing:
                 pin_session(db, existing)
-            graph = course_graph(db, course_id, existing.release_id if existing else None)
+            material_release = current_material_release(db, course_id) or get_release(db, course_id)
+            graph = course_graph(
+                db, course_id, existing.release_id if existing else (
+                    material_release.id if material_release else None
+                )
+            )
             if target and target not in {c["id"] for c in graph["concepts"]}:
-                if existing and any(c["id"] == target for c in course_graph(db, course_id)["concepts"]):
+                current_graph = course_graph(
+                    db, course_id, material_release.id if material_release else None
+                )
+                if existing and any(c["id"] == target for c in current_graph["concepts"]):
                     raise HTTPException(409, "End this session to study a newly published lesson.")
                 raise HTTPException(404, "This lesson is not published in the selected course.")
             if existing:
@@ -129,8 +137,10 @@ def build_router(context: ApiContext):
                 raise HTTPException(409, "Publish course resources before starting a session.")
             if blocked := prerequisite_block(graph, state.evidence, target):
                 raise HTTPException(409, blocked)
+            if material_release is None:
+                raise HTTPException(409, "Publish course resources before starting a session.")
             session = StudySession(
-                course_id=course_id, owner_id=principal, release_id=get_release(db, course_id).id
+                course_id=course_id, owner_id=principal, release_id=material_release.id
             )
             db.add(session)
             db.flush()

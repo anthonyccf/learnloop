@@ -23,6 +23,10 @@ class DocumentRename(StrictModel):
     title: str = Field(min_length=1, max_length=235, pattern=r"^[^/\\]+$")
 
 
+class LessonRegeneration(StrictModel):
+    notes: str = Field(default="", max_length=2000)
+
+
 class ExpertPromptStages(StrictModel):
     analysis: str = Field(max_length=20000)
     lesson: str = Field(max_length=20000)
@@ -37,12 +41,15 @@ class ExpertPromptTemplate(StrictModel):
     enabledTools: list[str] = Field(default_factory=list, max_length=16)
     model: str = Field(min_length=1, max_length=200)
     temperature: float | None = Field(default=None, ge=0, le=2)
-    basePrompts: Literal["v1", "v2"] = "v1"
+    basePrompts: Literal["v1", "v2"] = "v2"
+    organizationVariant: Literal["baseline", "rules", "procedural", "exemplar"] = "baseline"
 
 
 class DocumentAnalyzeRequest(StrictModel):
     promptTemplate: ExpertPromptTemplate | None = None
     force: bool = False
+    hierarchyMode: Literal["continue", "new"] = "continue"
+    hierarchySourceReleaseId: str | None = None
 
 
 class Source(StrictModel):
@@ -270,6 +277,13 @@ class Assessment(StrictModel):
 class GroundingReview(StrictModel):
     status: Literal["supported", "unsupported", "uncertain"]
     summary: str = Field(min_length=5, max_length=600)
+    repairKind: Literal["visual_evidence", "questions_only", "other"] = "other"
+    questionNumbers: list[int] = Field(default_factory=list, max_length=6)
+
+
+class SlideTranscription(StrictModel):
+    visibleText: str = Field(max_length=6000)
+    unreadable: str = Field(max_length=500)
 
 
 class ExtendedTopicReview(StrictModel):
@@ -530,3 +544,4 @@ class QuestionKeyCheck(StrictModel):
 class LessonScopeReview(StrictModel):
     accepted: bool
     feedback: str = Field(min_length=10, max_length=1200)
+    needsVisualEvidence: bool = False

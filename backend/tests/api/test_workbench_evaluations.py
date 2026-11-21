@@ -7,6 +7,70 @@ from learnloop.persistence.database import AgentTemplate, Course, CourseRelease,
 from learnloop.persistence.releases import fingerprint
 
 
+def test_start_from_files_generates_material_and_runs_the_selected_test(stack, monkeypatch, tmp_path_factory):
+    from functools import partial
+
+    from learnloop import pseudo_experiment, pseudo_experiment_job
+    from learnloop.persistence import database
+    from learnloop.runtime.worker import work_once
+    from tests.conftest import COURSE_TEXT
+    from tests.evaluation.test_pseudo_experiment import OfflineProvider
+
+    client, factory, services, settings = stack
+    settings.llm_api_key = SecretStr("test-key")
+    root = tmp_path_factory.mktemp("ps")
+    monkeypatch.setattr(evaluations, "_pseudo_root", lambda owner: root)
+    monkeypatch.setattr(evaluations, "RUNS", root / "workspace")
+    launches = []
+    monkeypatch.setattr(evaluations, "_launch_test", launches.append)
+    monkeypatch.setattr(database, "session_factory", lambda: factory)
+    monkeypatch.setattr(pseudo_experiment_job, "get_settings", lambda: settings)
+    monkeypatch.setattr(pseudo_experiment, "run", partial(pseudo_experiment.run, provider_cls=OfflineProvider))
+    course = client.post("/api/courses", json={"title": "Test course"}).json()["id"]
+    material = client.post(
+        f"/api/courses/{course}/documents", data={"defer_processing": "true"},
+        files={"file": ("notes.txt", COURSE_TEXT.encode(), "text/plain")},
+    ).json()["documentId"]
+    body = {"courseId": course, "documentIds": [material], "learnerProfileIds": ["novice"], "activities": 3}
+    endpoint = "/api/evaluations/pseudo-runs/from-files"
+    result = client.post(endpoint, json=body)
+    assert result.status_code == 202, result.text
+    job = result.json()
+    assert job["phase"] == "Generating course materials"
+    assert client.post(endpoint, json=body).status_code == 409
+    assert len(launches) == 1
+    assert work_once(factory, services)
+    monkeypatch.setattr(pseudo_experiment_job.sys, "argv", ["job", str(launches[0])])
+    pseudo_experiment_job.main()
+    view = client.get("/api/evaluations/pseudo-runs").json()[0]
+    assert view["status"] == "completed", view
+    assert view["report"]["completed"] == 1
+    assert view["config"]["activities"] == 3
+    assert view["materialId"] == material
+    assert view["releaseId"].startswith(f"workbench:{job['workbenchRunId']}:")
+    assert client.get("/api/evaluations/setups").json()[0]["id"] == job["setupId"]
+
+
+def test_stop_during_generation_stops_the_linked_workbench_run(stack, monkeypatch, tmp_path):
+    client, _, _, settings = stack
+    settings.llm_api_key = SecretStr("test-key")
+    monkeypatch.setattr(evaluations, "_pseudo_root", lambda owner: tmp_path / owner)
+    monkeypatch.setattr(evaluations, "_launch_test", lambda path: None)
+    monkeypatch.setattr(evaluations, "terminate", lambda path: None)
+    course = client.post("/api/courses", json={"title": "Stop test"}).json()["id"]
+    material = client.post(
+        f"/api/courses/{course}/documents", data={"defer_processing": "true"},
+        files={"file": ("notes.txt", b"Source material", "text/plain")},
+    ).json()["documentId"]
+    job = client.post(
+        "/api/evaluations/pseudo-runs/from-files",
+        json={"courseId": course, "documentIds": [material]},
+    ).json()
+    result = client.post(f"/api/evaluations/pseudo-runs/{job['id']}/stop")
+    assert result.json()["status"] == "stopped"
+    assert client.get(f"/api/agent-activity/runs/{job['workbenchRunId']}").json()["status"] == "stopped"
+
+
 def test_readiness_blocks_launch_without_creating_a_job(stack, monkeypatch, tmp_path):
     client, _, _, _ = stack
     monkeypatch.setattr(evaluations, "RUNS", tmp_path / "runs")
@@ -78,6 +142,12 @@ def test_job_passes_settings_to_harness_and_records_failure(monkeypatch, tmp_pat
 
 
 def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch, tmp_path):
+    from uuid import uuid4
+
+    from learnloop.core.schemas import DifficultyMaterials
+    from learnloop.evaluation.fixtures import FixtureProvider
+    from learnloop.persistence.database import Chunk, Run, RunHierarchy
+
     client, factory, _, settings = stack
     monkeypatch.setattr(evaluations, "RUNS", tmp_path / "runs")
     with factory.begin() as db:
@@ -93,16 +163,40 @@ def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch,
             status="published",
         )
         db.add(document)
+        db.add(Document(
+            course_id=course.id, filename="draft.txt", sha256="b" * 64,
+            content_type="text/plain", content=b"draft", status="uploaded",
+        ))
         db.flush()
+        text = "Subtract the gradient to reduce the loss. The learning rate controls the update step size."
+        concept = {
+            "id": "one", "title": "Gradient", "summary": "Understand a gradient update.",
+            "sources": [{"chunkId": "one-chunk", "quote": text}],
+        }
+        prepared = FixtureProvider().generate(
+            "Expert", "",
+            {"concept": concept, "passages": [{"chunkId": "one-chunk", "text": text}]},
+            DifficultyMaterials,
+        )
         payload = {
             "documents": [
                 {
                     "id": document.id,
                     "filename": document.filename,
                     "sha256": document.sha256,
-                    "graph": {"concepts": [{"id": "one"}]},
+                    "graph": {
+                        "concepts": [concept],
+                        "resources": {
+                            "one": {
+                                "lesson": prepared.lesson.as_lesson(),
+                                "tests": [q.model_dump() for q in prepared.tests if q.difficulty == "basic"],
+                            }
+                        },
+                    },
                 }
-            ]
+            ],
+            "graph": {"concepts": [concept], "prerequisites": []},
+            "chunks": {"one-chunk": {"text": text, "page": 1, "label": document.filename}},
         }
         release = CourseRelease(
             course_id=course.id, version=1, sha256=fingerprint(payload), payload=payload
@@ -113,14 +207,45 @@ def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch,
             agent="tutor",
             data={"name": "First", "prompts": {"analysis": "Original"}},
         )
-        db.add_all([release, template])
+        run_id = str(uuid4())
+        db.add_all([
+            release,
+            template,
+            Chunk(
+                id="one-chunk", course_id=course.id, document_id=document.id,
+                ordinal=0, page=1, text=text,
+            ),
+            Run(
+                id=run_id, course_id=course.id, owner_id="test-owner",
+                input={"hierarchy_revision": 1, "hierarchy_ready": True},
+                snapshot={"workflow": "course_preparation", "status": "completed"},
+            ),
+            RunHierarchy(
+                run_id=run_id, ready=True,
+                graph={"concepts": [concept], "prerequisites": [], "topics": [], "related": []},
+                documents=payload["documents"],
+            ),
+        ])
         course_id, document_id = course.id, document.id
     response = client.post(
         "/api/evaluations/setups",
-        json={"courseId": course_id, "documentId": document_id, "tutorTemplateId": "template-1"},
+        json={
+            "courseId": course_id,
+            "documentId": document_id,
+            "workbenchRunId": run_id,
+            "tutorTemplateId": "template-1",
+        },
     )
     assert response.status_code == 201
     assert response.json()["status"] == "configuration_saved"
+    course_detail = client.get(f"/api/courses/{course_id}").json()
+    assert course_detail["publishedMaterials"] == [{"id": document_id, "filename": "notes.txt"}]
+    assert {d["filename"] for d in course_detail["documents"]} == {"notes.txt", "draft.txt"}
+    stale = client.post(
+        "/api/evaluations/setups",
+        json={"courseId": course_id, "documentId": document_id, "workbenchRunId": str(uuid4())},
+    )
+    assert stale.status_code == 404
     with factory.begin() as db:
         db.get(AgentTemplate, "template-1").data = {"name": "Changed"}
     saved = client.get("/api/evaluations/setups").json()
@@ -145,6 +270,7 @@ def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch,
         json={
             "courseId": course_id,
             "documentId": document_id,
+            "workbenchRunId": run_id,
             "learnerProfileIds": [custom["id"]],
         },
     )
@@ -162,17 +288,22 @@ def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch,
     )
     assert started.status_code == 202
     assert started.json()["learnerCount"] == 1 and len(launched) == 1
+    assert started.json()["materialSource"] == "workbench_generated"
+    assert started.json()["releaseVersion"] == 1
     assert len(client.get("/api/evaluations/pseudo-runs").json()) == 1
     source_path = tmp_path / "test-owner" / started.json()["id"]
     for name in ("unit.json", "exams.json", "expert.json"):
-        freeze(source_path / name, {"fixture": name})
+        freeze(source_path / name, {"fixture": name, "materialSource": "workbench_generated"})
     reused = client.post(
         "/api/evaluations/pseudo-runs",
         json={"setupId": custom_setup.json()["id"], "sourceRunId": started.json()["id"]},
     )
     assert reused.status_code == 202
+    assert reused.json()["materialSource"] == "workbench_generated"
     reused_input = thaw(tmp_path / "test-owner" / reused.json()["id"] / "input.json")["payload"]
-    assert reused_input["reused"]["expert"] == {"fixture": "expert.json"}
+    assert reused_input["reused"]["expert"] == {
+        "fixture": "expert.json", "materialSource": "workbench_generated"
+    }
     (source_path / "status.json").write_text(
         '{"status":"completed_with_failures"}', encoding="utf-8"
     )
@@ -219,6 +350,7 @@ def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch,
             json={
                 "courseId": course_id,
                 "documentId": document_id,
+                "workbenchRunId": run_id,
                 "learnerProfileIds": ["missing"],
             },
         ).status_code
@@ -228,7 +360,8 @@ def test_setup_pins_published_material_and_template_snapshot(stack, monkeypatch,
     assert client.get("/api/evaluations/setups").json() == []
     assert (
         client.post(
-            "/api/evaluations/setups", json={"courseId": course_id, "documentId": document_id}
+            "/api/evaluations/setups",
+            json={"courseId": course_id, "documentId": document_id, "workbenchRunId": run_id},
         ).status_code
         == 404
     )
@@ -263,6 +396,10 @@ def test_custom_learner_creation_validation_and_owner_isolation(stack, monkeypat
 
 
 def test_all_material_setup_pins_full_release_and_requires_coverage(stack, monkeypatch, tmp_path):
+    from uuid import uuid4
+
+    from learnloop.persistence.database import Run, RunHierarchy
+
     client, factory, _, settings = stack
     monkeypatch.setattr(evaluations, "RUNS", tmp_path / "runs")
     with factory.begin() as db:
@@ -276,31 +413,38 @@ def test_all_material_setup_pins_full_release_and_requires_coverage(stack, monke
                 sha256=str(i) * 64,
                 content_type="text/plain",
                 content=b"text",
-                status="published",
+                status="prepared",
             )
             for i in (1, 2)
         ]
         db.add_all(docs)
         db.flush()
-        payload = {
-            "documents": [
-                {
-                    "id": doc.id,
-                    "filename": doc.filename,
-                    "sha256": doc.sha256,
-                    "graph": {"concepts": [{"id": f"c{i}"}]},
-                }
-                for i, doc in enumerate(docs)
-            ]
-        }
-        db.add(
-            CourseRelease(
-                course_id=course.id, version=1, sha256=fingerprint(payload), payload=payload
-            )
-        )
+        documents = [
+            {
+                "id": doc.id,
+                "filename": doc.filename,
+                "sha256": doc.sha256,
+                "graph": {"concepts": [{"id": f"c{i}"}]},
+            }
+            for i, doc in enumerate(docs)
+        ]
+        run_id = str(uuid4())
+        db.add_all([
+            Run(
+                id=run_id, course_id=course.id, owner_id="test-owner",
+                input={"hierarchy_revision": 1, "hierarchy_ready": True},
+                snapshot={"workflow": "course_preparation", "status": "completed"},
+            ),
+            RunHierarchy(
+                run_id=run_id, ready=True,
+                graph={"concepts": [{"id": "c0"}, {"id": "c1"}], "prerequisites": []},
+                documents=documents,
+            ),
+        ])
         course_id = course.id
     response = client.post(
-        "/api/evaluations/setups", json={"courseId": course_id, "documentId": "__all__"}
+        "/api/evaluations/setups",
+        json={"courseId": course_id, "documentId": "__all__", "workbenchRunId": run_id},
     )
     assert response.status_code == 201
     setup = response.json()
@@ -311,3 +455,269 @@ def test_all_material_setup_pins_full_release_and_requires_coverage(stack, monke
         "/api/evaluations/pseudo-runs", json={"setupId": setup["id"], "concepts": 1}
     )
     assert started.status_code == 422 and "at least 2" in started.json()["detail"]
+
+
+def test_stop_pseudo_run_ends_a_running_test(stack, monkeypatch, tmp_path):
+    import json
+    from pathlib import Path
+
+    client, _, _, _ = stack
+    monkeypatch.setattr(evaluations, "_pseudo_root", lambda owner: tmp_path)
+    run_id = "ab" * 16
+    path = tmp_path / run_id
+    path.mkdir()
+    (path / "job.json").write_text(
+        json.dumps(
+            {
+                "id": run_id,
+                "createdAt": "2026-11-20T00:00:00+00:00",
+                "course": "Course",
+                "material": "notes.txt",
+                "config": {"baselines": False, "concepts": 1, "activities": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (path / "status.json").write_text(
+        '{"status":"running","phase":"Testing Novice"}', encoding="utf-8"
+    )
+    killed = []
+    monkeypatch.setattr(evaluations, "terminate", lambda run: killed.append(Path(run)))
+    response = client.post(f"/api/evaluations/pseudo-runs/{run_id}/stop")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "stopped"
+    assert body["message"].startswith("You stopped")
+    assert killed == [path]
+    assert (path / "stop.request").is_file()
+    assert client.post(f"/api/evaluations/pseudo-runs/{run_id}/stop").status_code == 409
+
+
+def test_workbench_generation_is_the_only_material_source(stack, monkeypatch, tmp_path):
+    from uuid import uuid4
+
+    from learnloop.core.schemas import DifficultyMaterials
+    from learnloop.evaluation.fixtures import FixtureProvider
+    from learnloop.persistence.database import Chunk, Run, RunHierarchy
+
+    client, factory, _, settings = stack
+    monkeypatch.setattr(evaluations, "RUNS", tmp_path / "runs")
+    monkeypatch.setattr(evaluations, "_pseudo_root", lambda owner: tmp_path / "pseudo" / owner)
+    settings.llm_api_key = SecretStr("test-key")
+    launched = []
+    monkeypatch.setattr(
+        evaluations.subprocess, "Popen", lambda args, **kwargs: launched.append(args)
+    )
+
+    text_one = (
+        "Subtract the gradient to reduce the loss. The learning rate controls the update step size."
+    )
+    text_two = "Paged attention allocates fixed-size KV blocks dynamically to avoid waste."
+    fixture = FixtureProvider()
+
+    with factory.begin() as db:
+        course = Course(owner_id="test-owner", title="Combined course")
+        db.add(course)
+        db.flush()
+        doc_pub = Document(
+            course_id=course.id,
+            filename="lec1.pdf",
+            sha256="1" * 64,
+            content_type="application/pdf",
+            content=b"%PDF-1",
+            status="published",
+        )
+        doc_gen = Document(
+            course_id=course.id,
+            filename="lec2.pdf",
+            sha256="2" * 64,
+            content_type="application/pdf",
+            content=b"%PDF-2",
+            status="prepared",
+        )
+        db.add_all([doc_pub, doc_gen])
+        db.flush()
+        chunk_pub = Chunk(
+            id="chunk-pub",
+            course_id=course.id,
+            document_id=doc_pub.id,
+            ordinal=0,
+            page=1,
+            text=text_one,
+        )
+        chunk_gen = Chunk(
+            id="chunk-gen",
+            course_id=course.id,
+            document_id=doc_gen.id,
+            ordinal=0,
+            page=1,
+            text=text_two,
+        )
+        db.add_all([chunk_pub, chunk_gen])
+        db.flush()
+
+        concept_pub = {
+            "id": f"{doc_pub.id}:gradient",
+            "title": "Gradient update",
+            "summary": "Subtract the gradient.",
+            "sources": [{"chunkId": "chunk-pub", "quote": text_one}],
+        }
+        concept_gen = {
+            "id": f"{doc_gen.id}:paged-kv",
+            "title": "Paged KV cache",
+            "summary": "Allocate fixed-size KV blocks.",
+            "sources": [{"chunkId": "chunk-gen", "quote": text_two}],
+        }
+        pack_pub = fixture.generate(
+            "Expert",
+            "",
+            {"concept": concept_pub, "passages": [{"chunkId": "chunk-pub", "text": text_one}]},
+            DifficultyMaterials,
+        )
+        pack_gen = fixture.generate(
+            "Expert",
+            "",
+            {"concept": concept_gen, "passages": [{"chunkId": "chunk-gen", "text": text_two}]},
+            DifficultyMaterials,
+        )
+        pub_payload = {
+            "format": 1,
+            "documents": [
+                {
+                    "id": doc_pub.id,
+                    "filename": doc_pub.filename,
+                    "sha256": doc_pub.sha256,
+                    "pages": 1,
+                    "graph": {
+                        "concepts": [concept_pub],
+                        "resources": {
+                            concept_pub["id"]: {
+                                "lesson": pack_pub.lesson.as_lesson(),
+                                "tests": [q.model_dump() for q in pack_pub.tests],
+                            }
+                        },
+                    },
+                }
+            ],
+            "graph": {
+                "concepts": [concept_pub],
+                "prerequisites": [
+                    {
+                        "prerequisite": concept_pub["id"],
+                        "dependent": "removed:old-concept",
+                        "source": {"chunkId": "chunk-pub", "quote": text_one[:40]},
+                    }
+                ],
+            },
+            "chunks": {
+                "chunk-pub": {
+                    "id": "chunk-pub",
+                    "document_id": doc_pub.id,
+                    "course_id": course.id,
+                    "page": 1,
+                    "text": text_one,
+                    "label": doc_pub.filename,
+                }
+            },
+        }
+        release = CourseRelease(
+            course_id=course.id, version=3, sha256=fingerprint(pub_payload), payload=pub_payload
+        )
+        wb_run_id = str(uuid4())
+        wb_run = Run(
+            id=wb_run_id,
+            course_id=course.id,
+            owner_id="test-owner",
+            input={"hierarchy_revision": 2, "hierarchy_ready": True},
+            snapshot={"workflow": "course_preparation", "status": "completed"},
+        )
+        hierarchy = RunHierarchy(
+            run_id=wb_run_id,
+            ready=True,
+            graph={
+                "concepts": [concept_pub, concept_gen],
+                "prerequisites": [],
+                "topics": [],
+                "related": [],
+            },
+            documents=[
+                {
+                    "id": doc_pub.id,
+                    "filename": doc_pub.filename,
+                    "sha256": doc_pub.sha256,
+                    "pages": 1,
+                    "graph": {
+                        "concepts": [concept_pub],
+                        "resources": {
+                            concept_pub["id"]: {
+                                "lesson": pack_pub.lesson.as_lesson(),
+                                "tests": [q.model_dump() for q in pack_pub.tests],
+                            }
+                        },
+                    },
+                },
+                {
+                    "id": doc_gen.id,
+                    "filename": doc_gen.filename,
+                    "sha256": doc_gen.sha256,
+                    "pages": 1,
+                    "graph": {
+                        "concepts": [concept_gen],
+                        "resources": {
+                            concept_gen["id"]: {
+                                "lesson": pack_gen.lesson.as_lesson(),
+                                "tests": [q.model_dump() for q in pack_gen.tests],
+                            }
+                        },
+                    },
+                },
+            ],
+        )
+        db.add_all([release, wb_run, hierarchy])
+        db.flush()
+        course_id, release_id = course.id, release.id
+
+    setup_res = client.post(
+        "/api/evaluations/setups",
+        json={
+            "courseId": course_id,
+            "documentId": "__all__",
+            "releaseId": release_id,
+            "workbenchRunId": wb_run_id,
+            "overlayPublished": True,
+        },
+    )
+    assert setup_res.status_code == 201, setup_res.text
+    setup = setup_res.json()
+    assert setup["materialSource"] == "workbench_generated"
+    assert setup["material"]["documentCount"] == 2
+    assert setup["release"]["version"] == 2
+    assert setup["release"]["id"] == f"workbench:{wb_run_id}:2"
+    assert "publishedReleaseId" not in setup["release"]
+
+    too_few = client.post(
+        "/api/evaluations/pseudo-runs",
+        json={"setupId": setup["id"], "concepts": 1, "activities": 2},
+    )
+    assert too_few.status_code == 422 and "at least 2" in too_few.json()["detail"]
+
+    started = client.post(
+        "/api/evaluations/pseudo-runs",
+        json={"setupId": setup["id"], "concepts": 2, "activities": 2},
+    )
+    assert started.status_code == 202, started.text
+    view = started.json()
+    assert view["materialSource"] == "workbench_generated"
+    assert view["releaseVersion"] == 2
+    assert view["workbenchRunId"] == wb_run_id
+    assert len(launched) == 1
+
+    frozen = thaw(tmp_path / "pseudo" / "test-owner" / view["id"] / "input.json")["payload"]
+    merged = frozen["release"]
+    assert len(merged["documents"]) == 2
+    assert {c["id"] for c in merged["graph"]["concepts"]} == {
+        concept_pub["id"],
+        concept_gen["id"],
+    }
+    assert merged["graph"]["prerequisites"] == []
+    assert set(merged["chunks"]) == {"chunk-pub", "chunk-gen"}

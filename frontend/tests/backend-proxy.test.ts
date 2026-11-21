@@ -35,8 +35,9 @@ test("backend bridge keeps credentials private and forwards uploads and streamed
     assert.equal(forbidden.status, 403); assert.equal(calls.length, 2);
     const unknown = await GET(new NextRequest("http://127.0.0.1:3100/api/backend/admin"), context("admin"));
     assert.equal(unknown.status, 404);
-    for (const path of ["courses/course-1/plan", "courses/course-1/plan/revise", "activities/activity-1/present", "courses/course-1/concepts/doc-1:concept-1/target"]) {
-      const method = path.endsWith("/plan") ? "GET" : "POST";
+    const pseudoRunId = "ab".repeat(16);
+    for (const path of ["courses/course-1/plan", "courses/course-1/plan/revise", "activities/activity-1/present", "courses/course-1/concepts/doc-1:concept-1/target", "agent-activity/runs/run-1/stop", "evaluations/pseudo-runs/from-files", `evaluations/pseudo-runs/${pseudoRunId}/stop`, `evaluations/pseudo-runs/${pseudoRunId}/retry`, "courses/course-1/hierarchy", "courses/course-1/hierarchy-sources"]) {
+      const method = path.endsWith("/plan") || path.endsWith("/hierarchy-sources") ? "GET" : "POST";
       const request = new NextRequest(`http://127.0.0.1:3100/api/backend/${path}`, { method, headers: { Origin: "http://127.0.0.1:3100", Host: "127.0.0.1:3100" } });
       assert.equal((await (method === "GET" ? GET : POST)(request, context(path))).status, 202);
       assert.equal(calls.at(-1)?.url, `http://127.0.0.1:8010/api/${path}`);

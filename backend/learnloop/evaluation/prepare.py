@@ -6,7 +6,14 @@ from learnloop.core.domain import DIFFICULTIES, validate_graph
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import grounding_valid, validate_sources
 from learnloop.core.schemas import DifficultyMaterials, Graph
-from learnloop.evaluation.artifacts import checkpoint, digest, freeze, prompt_key, thaw
+from learnloop.evaluation.artifacts import (
+    checkpoint,
+    digest,
+    freeze,
+    prompt_key,
+    storage_name,
+    thaw,
+)
 from learnloop.evaluation.provider import usage
 from learnloop.evaluation.schema import EXPERTS, ExamDraft, ExamItem, Screening, Unit
 from learnloop.evaluation.variants import EXPERT, instruction
@@ -98,7 +105,7 @@ def author_exams(unit, provider, destination):
                 "passages": [{"chunkId": p["id"], "text": p["text"]} for p in passages],
             },
             ExamDraft,
-            destination.parent / "drafts" / "exams" / f"{concept.id}.json",
+            destination.parent / "drafts" / "exams" / f"{storage_name(concept.id)}.json",
         )
         for phase in ("pre", "post"):
             for question in getattr(draft, phase):
@@ -156,7 +163,7 @@ def build_expert(unit, exams, variant, provider, destination, workers=1):
                 ],
             },
             DifficultyMaterials,
-            destination.parent / "drafts" / variant / f"{concept.id}.json",
+            destination.parent / "drafts" / variant / f"{storage_name(concept.id)}.json",
         )
         if any(prompt_key(q.model_dump()) in held_out for q in pack.tests):
             raise ValueError("Training/test prompt overlap; reject this frozen artifact")
@@ -215,7 +222,9 @@ def screen(unit, frozen, providers, embed, embedding_model="configured", cache_d
     }
     for variant, artifact in frozen.items():
         for id, pack in artifact["materials"].items():
-            cache_path = cache_dir / variant / f"{id}.json" if cache_dir is not None else None
+            cache_path = (
+                cache_dir / variant / f"{storage_name(id)}.json" if cache_dir is not None else None
+            )
             cache_key = digest(
                 {
                     "unit": unit.model_dump(),

@@ -9,8 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 from sqlalchemy import func, select
 
-from learnloop.agents.tutoring import prompts_v2
-from learnloop.agents.tutoring.chat import CHAT_PROMPT
+from learnloop.agents.tutoring.prompts import CHAT_PROMPT
 from learnloop.agents.tutoring.workbench import lesson_for
 from learnloop.core.domain import (
     DIFFICULTIES,
@@ -19,8 +18,8 @@ from learnloop.core.domain import (
     prerequisite_block,
     target_difficulty,
 )
+from learnloop.core.errors import ServiceError
 from learnloop.core.planning import candidates
-from learnloop.core.prompt_versions import versioned
 from learnloop.core.schemas import (
     ExpertPromptStages,
     StrictModel,
@@ -42,7 +41,11 @@ from learnloop.persistence.database import (
 )
 from learnloop.persistence.learner_memory import learner_memory, record_tutor_observation
 from learnloop.persistence.plans import get_plan
-from learnloop.persistence.releases import get_release
+from learnloop.persistence.releases import (
+    adopt_workbench_materials,
+    current_material_release,
+    get_release,
+)
 from learnloop.persistence.repository import course_graph, learner, public_activity
 from learnloop.runtime.events import new_run, run_status
 from learnloop.runtime.handoffs import HandoffRequest, handoff_view
@@ -62,7 +65,19 @@ class TutorTemplate(StrictModel):
     enabledTools: list[str] = Field(default_factory=list, max_length=16)
     model: str = Field(min_length=1, max_length=200)
     temperature: float | None = Field(default=None, ge=0, le=2)
-    basePrompts: Literal["v1", "v2"] = "v1"
+    basePrompts: Literal["v1", "v2"] = "v2"
+
+
+class ExpertTemplate(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    agent: Literal["expert"]
+    name: str = Field(min_length=1, max_length=200)
+    prompts: ExpertPromptStages
+    enabledTools: list[str] = Field(default_factory=list, max_length=16)
+    model: str = Field(min_length=1, max_length=200)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    basePrompts: Literal["v1", "v2"] = "v2"
+    organizationVariant: Literal["baseline", "rules", "procedural", "exemplar"] = "baseline"
 
 
 class Start(StrictModel):
@@ -70,6 +85,7 @@ class Start(StrictModel):
     conceptId: str | None = Field(default=None, min_length=1, max_length=100)
     mode: Literal["auto", "lesson", "quiz", "pre_assessment"]
     promptTemplate: TutorTemplate | None = None
+    expertPromptTemplate: ExpertTemplate | None = None
     continuation: bool = False
     nextRound: bool = False
     stepId: str | None = Field(default=None, max_length=100)
@@ -159,7 +175,9 @@ def build_router(context):
         # This lets newly published materials appear without changing the
         # content already being used by an in-progress lesson or quiz.
         release = get_release(db, memory.course_id, session.release_id if session else None)
-        latest_release = get_release(db, memory.course_id)
+        latest_release = current_material_release(db, memory.course_id) or get_release(
+            db, memory.course_id
+        )
         graph = course_graph(db, memory.course_id, release.id) if release else {"concepts": []}
         latest_graph = course_graph(db, memory.course_id, latest_release.id) if latest_release else {"concepts": []}
         history = db.execute(
@@ -324,9 +342,15 @@ def build_router(context):
                 current_plan = memory.data.get("preAssessmentRoundPlan", memory.data["preAssessmentPlan"])
                 if not completed or (body.nextRound and completed != len(current_plan)) or (not body.nextRound and completed >= len(current_plan)):
                     raise HTTPException(409, "Finish this round before starting the next one." if body.nextRound else "This round is complete. Start the next round to continue.")
-            release = get_release(db, course.id, previous.release_id if body.continuation else None)
+            if body.continuation:
+                release = get_release(db, course.id, previous.release_id if previous else None)
+            else:
+                try:
+                    release = adopt_workbench_materials(db, course.id)
+                except (ServiceError, ValueError) as exc:
+                    raise HTTPException(409, getattr(exc, "message", str(exc))) from exc
             if not release:
-                raise HTTPException(409, "Publish course materials before starting a Tutor run.")
+                raise HTTPException(409, "Prepare course materials in Workbench before starting a Tutor run.")
             graph = course_graph(db, course.id, release.id)
             pre_plan = memory.data.get("preAssessmentPlan", []) if body.continuation else []
             round_number = memory.data.get("preAssessmentRound", 1) if body.continuation else 1
@@ -418,7 +442,10 @@ def build_router(context):
                 db.add(session)
                 db.flush()
             memory.session_id = session.id
-            memory.data = {"request": body.request, "mode": body.mode, "branch": branch, "conceptId": concept["id"], "stepId": uid(), "runIds": [], "chat": chat_history, "chatUsage": chat_usage, "promptTemplate": body.promptTemplate.model_dump() if body.promptTemplate else None, **({"preAssessmentPlan": pre_plan, "preAssessmentRoundPlan": round_plan, "preAssessmentRound": round_number, "preAssessmentRoundStart": round_start} if pre_plan and (body.mode == "pre_assessment" or body.continuation) else {})}
+            expert_template = body.expertPromptTemplate.model_dump() if body.expertPromptTemplate else None
+            if expert_template is None and body.continuation:
+                expert_template = memory.data.get("expertPromptTemplate")
+            memory.data = {"request": body.request, "mode": body.mode, "branch": branch, "conceptId": concept["id"], "stepId": uid(), "runIds": [], "chat": chat_history, "chatUsage": chat_usage, "promptTemplate": body.promptTemplate.model_dump() if body.promptTemplate else None, "expertPromptTemplate": expert_template, **({"preAssessmentPlan": pre_plan, "preAssessmentRoundPlan": round_plan, "preAssessmentRound": round_number, "preAssessmentRoundStart": round_start} if pre_plan and (body.mode == "pre_assessment" or body.continuation) else {})}
             if branch == "lesson":
                 material = lesson_for(db, course.id, release.id, concept["id"])
                 if material:
@@ -434,6 +461,7 @@ def build_router(context):
                     "workbench_auto": branch in ("auto", "lesson"),
                     "workbench_force_lesson": branch == "lesson",
                     "prompt_template": body.promptTemplate.model_dump() if body.promptTemplate else None,
+                    "expert_prompt_template": expert_template,
                     "workbench_memory_id": memory.id,
                     "workbench_step_id": memory.data["stepId"],
                 }, concept["id"])
@@ -563,7 +591,7 @@ def build_router(context):
         recorder = UsageRecorder()
         chat_services = PromptConfiguredServices(MeteredServices(context.services, recorder), template)
         response = chat_services.generate(
-            "Tutoring", versioned(chat_services, "Tutoring", CHAT_PROMPT, prompts_v2.CHAT_PROMPT) + "\nAlso choose nextAction: lesson, quiz, or none. "
+            "Tutoring", CHAT_PROMPT + "\nAlso choose nextAction: lesson, quiz, or none. "
             "Suggest a lesson when more explanation is needed and a quiz when practice is appropriate. "
             "The current unanswered quiz stays visible until answered or cleared.",
             context_data, WorkbenchTutorReply,

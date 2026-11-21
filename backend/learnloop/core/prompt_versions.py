@@ -1,21 +1,19 @@
-"""Select between built-in prompt versions.
+"""Built-in prompt metadata and compatibility helpers.
 
-A matching agent template's basePrompts wins; otherwise PROMPT_VERSION applies.
+v2 is the single built-in prompt set; legacy v1 references resolve to v2.
 """
 
-VERSIONS = ("v1", "v2")
+VERSIONS = ("v2",)
 
 
 def prompt_version(services, role):
-    chooser = getattr(services, "template_prompt_version", None)
-    version = chooser(role) if callable(chooser) else None
-    if version not in VERSIONS:
-        version = getattr(getattr(services, "settings", None), "prompt_version", "v1")
-    return version if version in VERSIONS else "v1"
+    del services, role
+    return "v2"
 
 
 def versioned(services, role, v1, v2):
-    return v2 if prompt_version(services, role) == "v2" else v1
+    del services, role, v1
+    return v2
 
 
 def _prompt(title, text, note=""):
@@ -25,77 +23,63 @@ def _prompt(title, text, note=""):
     return item
 
 
-def builtin_prompts(agent, version):
+def builtin_prompts(agent, version="v2", variant="baseline"):
     """Built-in prompt text for each template section. Template text is added after these."""
-    from learnloop.agents.assessing import mixed_answers as assessing_mixed
-    from learnloop.agents.assessing import prompts as assessing_v1
-    from learnloop.agents.assessing import prompts_v2 as assessing_v2
-    from learnloop.agents.expert import prompts as expert_v1
-    from learnloop.agents.expert import prompts_v2 as expert_v2
-    from learnloop.agents.expert import questions as expert_questions
-    from learnloop.agents.tutoring import chat as tutoring_chat
-    from learnloop.agents.tutoring import prompts as tutoring_v1
-    from learnloop.agents.tutoring import prompts_v2 as tutoring_v2
+    del version
+    from learnloop.agents.assessing import prompts as assessing_prompts
+    from learnloop.agents.expert import prompts as expert_prompts
+    from learnloop.agents.expert import prompts_variants
+    from learnloop.agents.tutoring import prompts as tutoring_prompts
 
     if agent == "expert":
-        current = expert_v2 if version == "v2" else expert_v1
-        formats = (
-            current.FORMAT_INSTRUCTIONS if version == "v2" else expert_questions.FORMAT_INSTRUCTIONS
+        organization = prompts_variants.VARIANTS.get(variant, {})
+        note = (
+            f"Course-structure variant: {variant}."
+            if organization
+            else "Production course-structure prompt."
         )
-        mixed = current.MIXED_PROMPT if version == "v2" else expert_questions.MIXED_PROMPT
-        solve = current.SOLVE_PROMPT if version == "v2" else expert_questions.SOLVE_PROMPT
         return {
             "analysis": [
                 _prompt(
-                    "Section concepts",
-                    expert_v1.SECTION_PROMPT,
-                    "Shared by v1 and v2. v2 changes the lesson and question prompts.",
+                    title,
+                    organization.get(name) or getattr(expert_prompts, name),
+                    note
+                    if name == "SECTION_PROMPT"
+                    else note + " Additional instructions are not appended to this prompt.",
+                )
+                for title, name in (
+                    ("Section concepts", "SECTION_PROMPT"),
+                    ("Relationship analyst", "RELATION_PROMPT"),
+                    ("Relationship reviewer", "REVIEW_PROMPT"),
+                    ("Curriculum plan", "CURRICULUM_PROMPT"),
                 )
             ],
             "lesson": [
-                _prompt("Course materials", current.PYRAMID_MATERIALS_PROMPT),
-                _prompt("Pseudo-student tests", current.EXPERT_MATERIALS_PROMPT),
+                _prompt("Course materials", expert_prompts.PYRAMID_MATERIALS_PROMPT),
+                _prompt("Pseudo-student tests", expert_prompts.EXPERT_MATERIALS_PROMPT),
             ],
             "questions": [
-                _prompt("Single-answer question", current.ON_DEMAND_QUESTION_PROMPT),
-                _prompt("Mixed-format question", mixed),
+                _prompt("Single-answer question", expert_prompts.ON_DEMAND_QUESTION_PROMPT),
+                _prompt("Mixed-format question", expert_prompts.MIXED_PROMPT),
                 _prompt(
                     "Format rules",
-                    "\n\n".join(f"{name}\n{text}" for name, text in formats.items()),
+                    "\n\n".join(
+                        f"{name}\n{text}"
+                        for name, text in expert_prompts.FORMAT_INSTRUCTIONS.items()
+                    ),
                 ),
-                _prompt("Answer-key check", current.QUESTION_KEY_PROMPT),
-                _prompt("Independent solve", solve),
+                _prompt("Answer-key check", expert_prompts.QUESTION_KEY_PROMPT),
+                _prompt("Independent solve", expert_prompts.SOLVE_PROMPT),
             ],
         }
     if agent == "tutor":
-        current = tutoring_v2 if version == "v2" else tutoring_v1
         return {
-            "analysis": [_prompt("Learning plan", current.PLAN_PROMPT)],
-            "lesson": [
-                _prompt(
-                    "Tutor response",
-                    current.CHAT_PROMPT if version == "v2" else tutoring_chat.CHAT_PROMPT,
-                )
-            ],
+            "analysis": [_prompt("Learning plan", tutoring_prompts.PLAN_PROMPT)],
+            "lesson": [_prompt("Tutor response", tutoring_prompts.CHAT_PROMPT)],
             "questions": [],
         }
-    current = assessing_v2 if version == "v2" else assessing_v1
     return {
-        "analysis": [_prompt("Multiple-choice assessment", current.FEEDBACK_PROMPT)],
-        "lesson": [
-            _prompt(
-                "Written answer",
-                assessing_v2.OPEN_FEEDBACK_PROMPT
-                if version == "v2"
-                else assessing_mixed.OPEN_FEEDBACK_PROMPT,
-            )
-        ],
-        "questions": [
-            _prompt(
-                "Fill-in blanks",
-                assessing_v2.BLANK_EQUIVALENCE_PROMPT
-                if version == "v2"
-                else assessing_mixed.BLANK_EQUIVALENCE_PROMPT,
-            )
-        ],
+        "analysis": [_prompt("Multiple-choice assessment", assessing_prompts.FEEDBACK_PROMPT)],
+        "lesson": [_prompt("Written answer", assessing_prompts.OPEN_FEEDBACK_PROMPT)],
+        "questions": [_prompt("Fill-in blanks", assessing_prompts.BLANK_EQUIVALENCE_PROMPT)],
     }

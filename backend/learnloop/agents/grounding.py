@@ -26,6 +26,11 @@ incorrect keys, contradictory claims and invalid calculations. Use uncertain
 when evidence is insufficient; never fill gaps using outside knowledge.
 Return supported only if every item is supported. Provide a short review summary
 without quoting answer keys or private test content. Do not decide learner states.
+For a rejected lesson pack use repairKind=visual_evidence when an equation,
+diagram, chart or slide label appears missing from the available passage text.
+For a sound lesson with defective quiz wording, distractors or keys use
+questions_only and list the 1-based questionNumbers to revise. For other
+failures or a supported item use other and an empty list.
 """
 
 

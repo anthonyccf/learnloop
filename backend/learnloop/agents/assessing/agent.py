@@ -9,7 +9,6 @@ import copy
 
 from sqlalchemy import select
 
-from learnloop.agents.assessing import prompts_v2
 from learnloop.agents.assessing.mixed_answers import assess_mixed
 from learnloop.agents.assessing.prompts import FEEDBACK_PROMPT
 from learnloop.agents.question_review import question_review_valid, review_question
@@ -17,7 +16,6 @@ from learnloop.agents.rubrics import ensure_rubric, validate_assessment
 from learnloop.core.domain import WEAKNESS_FAILURE_THRESHOLD, assess_evidence, effective_state
 from learnloop.core.errors import ServiceError
 from learnloop.core.grounding import source_ids
-from learnloop.core.prompt_versions import versioned
 from learnloop.core.question_formats import parse_question
 from learnloop.core.schemas import Assessment, MultipleAnswerQuestion, Question
 from learnloop.persistence.database import (
@@ -34,6 +32,13 @@ from learnloop.persistence.database import (
 from learnloop.persistence.releases import pin_session
 from learnloop.persistence.repository import grounding_chunks, learner
 from learnloop.runtime.events import accept, pending, run_status, step
+
+
+def assess_single_answer(services, question, context, choice_id, reasoning):
+    """Produce and validate feedback using the Workbench Assessor contract."""
+    output = services.generate("Assessing", FEEDBACK_PROMPT, context, Assessment)
+    coverage, score = validate_assessment(question, output, choice_id, reasoning)
+    return output, coverage, score
 
 
 def run(factory, services, run_id):
@@ -171,9 +176,9 @@ def run(factory, services, run_id):
         context["rubric"] = [c.model_dump() for c in rubric_question.rubric]
         context["referenceAnswer"] = rubric_question.referenceAnswer
         if isinstance(rubric_question, Question):
-            prompt = versioned(services, "Assessing", FEEDBACK_PROMPT, prompts_v2.FEEDBACK_PROMPT)
-            output = services.generate("Assessing", prompt, context, Assessment)
-            coverage, score = validate_assessment(rubric_question, output, submission.choice_id, reasoning)
+            output, coverage, score = assess_single_answer(
+                services, rubric_question, context, submission.choice_id, reasoning
+            )
         else:
             if not typed_answer:
                 raise ServiceError("missing_answer", "The saved response is missing its typed answer.", False)

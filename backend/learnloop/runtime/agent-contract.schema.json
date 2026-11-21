@@ -43,6 +43,7 @@
           "waiting_for_learner",
           "needs_review",
           "paused",
+          "stopped",
           "completed",
           "failed"
         ]
@@ -1138,6 +1139,7 @@
                         "waiting_for_learner",
                         "needs_review",
                         "paused",
+                        "stopped",
                         "completed",
                         "failed"
                       ]
@@ -1839,6 +1841,7 @@
                   "waiting_for_learner",
                   "needs_review",
                   "paused",
+                  "stopped",
                   "completed",
                   "failed"
                 ]

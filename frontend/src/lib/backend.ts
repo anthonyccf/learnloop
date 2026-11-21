@@ -4,6 +4,7 @@ export type Difficulty = "basic" | "intermediate" | "advanced";
 export type Reference = { documentId: string; label: string; page?: number };
 export type CourseDetail = Course & {
   release?: { id: string; version: number; sha256: string } | null;
+  publishedMaterials?: { id: string; filename: string }[];
   documents: { id: string; filename: string; status: string; pages: number; lessonCount: number; postLessonCount?: number; testCount: number; sourceWarnings?: { conceptId: string; title?: string; message: string }[];
     coverage?: { analysisVersion?: number; processedPassages?: number; selectedPassages?: number; totalPassages?: number; reviewedSections?: number; totalSections?: number } }[];
   graph: { concepts: { id: string; title: string; summary: string; curriculum?: CurriculumObjective | null; targetDifficulty?: Difficulty; sources: { chunkId: string; quote: string }[] }[];
@@ -46,7 +47,7 @@ export type StudySession = { id: string; courseId: string; status: string; runId
   prerequisiteBlock?: PrerequisiteBlock;
   answer?: SavedMixedAnswer;
   activity: { id: string; conceptId: string; status: string; hintUsed: boolean; difficulty: string; prompt: string; choices: { id: string; text: string }[]; sources: Reference[]; action?: string; rationale?: string; objective?: string; extendedTopic?: boolean; extensionReason?: string | null; format?: QuestionFormat; blankIds?: string[] } | null };
-export type RunSummary = { id: string; workflow: string; status: string; summary: string; startedAt?: string | null; documentId?: string | null; sessionId?: string | null; templateName?: string | null; model?: string | null; temperature?: number | null; modelsUsed?: string[] };
+export type RunSummary = { id: string; workflow: string; status: string; summary: string; startedAt?: string | null; documentId?: string | null; documentIds?: string[]; sessionId?: string | null; templateName?: string | null; model?: string | null; temperature?: number | null; modelsUsed?: string[]; stopSupported?: boolean; hierarchyMode?: "new" | "continue" | null; expertUsage?: { reportedCostUsd: number; reportedCalls: number; unreportedCalls: number; priorUsageUnknown: boolean } | null };
 export type LearningMaterial = {
   curriculum?: CurriculumObjective | null;
   conceptId: string; documentId: string; filename: string; questionCount: number; sources: Reference[];
@@ -62,6 +63,13 @@ export type LearningMaterial = {
   };
 };
 export type LearningMaterials = { materials: LearningMaterial[]; expectedCount: number };
+export function uploadCourseFile(courseId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("defer_processing", "true");
+  return api<{ documentId: string; duplicate: boolean }>(`courses/${encodeURIComponent(courseId)}/documents`, form);
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const form = body instanceof FormData;
   const response = await fetch(`/api/backend/${path}`, {
@@ -74,6 +82,9 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     throw new PrerequisiteBlockedError(data.detail);
   }
   if (!response.ok) {
+    if (path === "evaluations/pseudo-runs/from-files" && response.status === 404 && data?.detail === "Not Found") {
+      throw new Error("The learning server needs to be restarted to start tests from new course materials.");
+    }
     const validation = Array.isArray(data?.detail) ? data.detail.map((item: { loc?: unknown[]; msg?: string }) => {
       const field = (item.loc || []).filter((part) => part !== "body").join(".");
       return item.msg ? `${field ? `${field}: ` : ""}${item.msg}` : "";

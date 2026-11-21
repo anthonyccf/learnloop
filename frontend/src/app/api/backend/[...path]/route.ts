@@ -3,18 +3,20 @@ import { NextRequest } from "next/server";
 
 // Only expose the local single-owner API's public projections.
 const routes = [
+  /^courses\/[^/]+\/hierarchy-runs(?:\/[^/]+(?:\/publish)?)?$/,
   /^agent-templates(?:\/(?:save|delete|builtin-prompts))?$/,
-  /^courses(?:\/[^/]+(?:\/(?:documents|rename|materials|organize|learner-state|sessions|search|runs|assessments))?)?$/,
+  /^courses(?:\/[^/]+(?:\/(?:documents|rename|materials|organize|learner-state|sessions|search|runs|assessments|hierarchy|hierarchy-sources))?)?$/,
   /^courses\/[^/]+\/plan(?:\/revise)?$/,
   /^courses\/[^/]+\/concepts\/[^/]+\/target$/,
   /^documents\/[^/]+\/(?:rename|review|materials|analyze|inspection|pages\/\d+(?:\/slide)?)$/,
   /^sessions\/[^/]+(?:\/(?:end|next|chat))?$/,
   /^activities\/[^/]+\/(?:hint|responses|present)$/,
   /^submissions\/[^/]+$/,
-  /^agent-activity\/runs\/[^/]+(?:\/(?:commands|events|evaluation))?$/,
+  /^agent-activity\/runs\/[^/]+(?:\/(?:commands|events|evaluation|stop))?$/,
   /^workbench\/courses\/[^/]+\/memories$/,
   /^evaluations(?:\/(?:bundles|runs|setups|learners|pseudo-runs)(?:\/[a-f0-9]{32})?)?$/,
-  /^evaluations\/pseudo-runs\/[a-f0-9]{32}\/retry$/,
+  /^evaluations\/pseudo-runs\/from-files$/,
+  /^evaluations\/pseudo-runs\/[a-f0-9]{32}\/(?:retry|stop)$/,
   /^workbench\/memories\/[^/]+(?:\/(?:start|answer|retry|clear|chat))?$/,
 ];
 

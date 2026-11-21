@@ -13,7 +13,6 @@ from learnloop.agents.expert.questions import generate_question, saved_question
 from learnloop.agents.grounding import review_grounding
 from learnloop.agents.references import refs
 from learnloop.agents.rubrics import ensure_rubric
-from learnloop.agents.tutoring import prompts_v2
 from learnloop.agents.tutoring.prompts import PLAN_PROMPT
 from learnloop.core.domain import prerequisite_block, select_concept, target_difficulty
 from learnloop.core.errors import ServiceError
@@ -22,18 +21,36 @@ from learnloop.core.grounding import (
     source_ids,
 )
 from learnloop.core.planning import candidates
-from learnloop.core.prompt_versions import versioned
-from learnloop.core.question_formats import public_prompt
-from learnloop.core.question_formats import parse_question
+from learnloop.core.question_formats import parse_question, public_prompt
 from learnloop.core.schemas import PlanChoice, Question
 from learnloop.persistence.database import Activity, Course, Run, StudySession, now, uid
 from learnloop.persistence.learner_memory import learner_memory
 from learnloop.persistence.plans import get_plan, record_revision
-from learnloop.persistence.releases import pin_session
+from learnloop.persistence.releases import fingerprint, pin_session, released_chunks
 from learnloop.persistence.repository import course_graph, grounding_chunks, learner, retrieve
 from learnloop.runtime.events import accept, pending, run_status, step
 from learnloop.runtime.handoffs import HandoffRequest
-from learnloop.persistence.releases import fingerprint, released_chunks
+
+
+def choose_candidate(services, options, goal, memory, learning_request=None):
+    """Choose among the same bounded candidates in Workbench and simulations."""
+    offered = options[:12]
+    choice = services.generate(
+        "Tutoring", PLAN_PROMPT,
+        {
+            "goal": goal,
+            **({"learningRequest": learning_request} if learning_request else {}),
+            "candidates": offered,
+            "learnerMemory": {c["conceptId"]: memory[c["conceptId"]] for c in offered},
+        },
+        PlanChoice,
+    )
+    selected = next((c for c in offered if c["id"] == choice.candidateId), None)
+    if not selected:
+        raise ServiceError(
+            "invalid_plan", "The proposed action is not an eligible planning candidate.", False
+        )
+    return selected, choice.rationale
 
 
 def select_question_format(difficulty, previous, mixed_formats):
@@ -163,31 +180,13 @@ def run(factory, services, run_id):
         evidence_version = state.version
         course_id, owner_id = session.course_id, session.owner_id
         content_owner_id = db.get(Course, course_id).owner_id
-    offered = options[:12]
-    choice = services.generate(
-        "Tutoring",
-        versioned(services, "Tutoring", PLAN_PROMPT, prompts_v2.PLAN_PROMPT),
-        {
-            "goal": goal,
-            **({"learningRequest": learning_request} if learning_request else {}),
-            "candidates": offered,
-            "learnerMemory": {
-                c["conceptId"]: memory[c["conceptId"]] for c in offered
-            },
-        },
-        PlanChoice,
-    )
-    selected = next((c for c in offered if c["id"] == choice.candidateId), None)
-    if not selected:
-        raise ServiceError(
-            "invalid_plan", "The proposed action is not an eligible planning candidate.", False
-        )
+    selected, rationale = choose_candidate(services, options, goal, memory, learning_request)
     concept = next(c for c in graph["concepts"] if c["id"] == selected["conceptId"])
     difficulty = selected["difficulty"]
     gap = memory[concept["id"]]["gap"]
     memory_target = None
     with factory.begin() as db:
-        step(db, run_id, "tutoring", "Choose learning action", choice.rationale, "revise_plan")
+        step(db, run_id, "tutoring", "Choose learning action", rationale, "revise_plan")
         previous = list(
             db.scalars(
                 select(Activity)
@@ -325,7 +324,7 @@ def run(factory, services, run_id):
                 "authoredBy": "expert",
                 "action": selected["action"],
                 "objective": selected["objective"],
-                "rationale": choice.rationale,
+                "rationale": rationale,
             },
             private={
                 **({"correctChoiceId": output.correctChoiceId} if isinstance(output, Question) else {}),
@@ -351,7 +350,7 @@ def run(factory, services, run_id):
             "reviewDates": review_dates,
             "candidates": options,
             "selected": selected,
-            "reason": choice.rationale,
+            "reason": rationale,
         }
         record_revision(
             db,

@@ -1,6 +1,7 @@
+import base64
 import json
 import math
-from threading import local
+from threading import BoundedSemaphore, local
 
 import httpx
 from pydantic import BaseModel
@@ -10,9 +11,13 @@ from learnloop.core.errors import ServiceError
 
 
 class Services:
+    supports_slide_images = True
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self._model_call_state = local()
+        # Shared by every worker thread so nested pools cannot exceed provider rate limits.
+        self._model_slots = BoundedSemaphore(settings.llm_max_concurrency)
         self.vectors = None
         if settings.uses_sqlite:
             from learnloop.services.vectors import SQLiteVectors
@@ -165,6 +170,7 @@ class Services:
         *,
         model: str | None = None,
         temperature: float | None = None,
+        image_png: bytes | None = None,
     ):
         self._model_call_state.resolved_model = None
         self._model_call_state.usage = None
@@ -229,7 +235,14 @@ class Services:
         }
         if temperature is not None:
             request["temperature"] = temperature
-        with httpx.Client(timeout=timeout, trust_env=False) as client:
+        if image_png is not None:
+            request["model"] = self.settings.expert_vision_model or request["model"]
+            encoded = base64.b64encode(image_png).decode("ascii")
+            request["messages"][1]["content"] = [
+                {"type": "text", "text": json.dumps(context)},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+            ]
+        with self._model_slots, httpx.Client(timeout=timeout, trust_env=False) as client:
             response = client.post(
                 self.settings.llm_base_url.rstrip("/") + "/chat/completions",
                 headers={

@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy import select
 
-from learnloop.agents.expert.prompts import MERGE_PROMPT, SECTION_PROMPT
+from learnloop.agents.expert.prompts import MERGE_PROMPT
+from learnloop.agents.expert.prompts_variants import organization_prompt
 from learnloop.agents.grounding import generate_grounded
 from learnloop.core.domain import validate_graph
 from learnloop.core.grounding import (
@@ -17,7 +18,9 @@ from learnloop.core.grounding import (
     validate_sources,
 )
 from learnloop.core.schemas import ConceptMatches, SectionGraph
-from learnloop.persistence.database import Course, Document, Run
+from learnloop.persistence.database import Course, Run
+from learnloop.persistence.run_materials import document_for
+from learnloop.runtime.cancellation import RunStopped
 from learnloop.runtime.events import accept, pending, run_status, step
 
 ANALYSIS_VERSION = 2
@@ -110,7 +113,7 @@ def analyze_document(factory, services, run_id, document_id, chunks):
     aliases = {c["id"]: f"s{i}" for i, c in enumerate(chunks)}
     original_ids = {alias: id for id, alias in aliases.items()}
     with factory.begin() as db:
-        doc = db.get(Document, document_id)
+        doc = document_for(db, run_id, document_id)
         prompt_fingerprint = db.get(Run, run_id).input.get("prompt_template_fingerprint")
         signature_input = "|".join(c["id"] for c in chunks)
         if prompt_fingerprint:
@@ -138,6 +141,8 @@ def analyze_document(factory, services, run_id, document_id, chunks):
                 {"concepts": graph["concepts"], "prerequisites": graph["prerequisites"]}, chunk_map
             )
 
+    section_prompt = organization_prompt(services, "SECTION_PROMPT")
+
     def inspect(index):
         passages = sections[index]
         result = saved_sections.get(str(index))
@@ -162,14 +167,14 @@ def analyze_document(factory, services, run_id, document_id, chunks):
             )
         # A section may legitimately contain no teaching claims (e.g. title/Q&A).
         if result is None:
-            result = services.generate("Expert", SECTION_PROMPT, payload, SectionGraph).model_dump()
+            result = services.generate("Expert", section_prompt, payload, SectionGraph).model_dump()
         validate_graph(result)
         receipt = None
         if result["concepts"]:
             result, receipt = generate_grounded(
                 services,
                 "Expert",
-                SECTION_PROMPT,
+                section_prompt,
                 payload,
                 SectionGraph,
                 {aliases[c["id"]]: c for c in passages},
@@ -205,7 +210,7 @@ def analyze_document(factory, services, run_id, document_id, chunks):
             try:
                 result, receipt = future.result()
                 with factory.begin() as db:
-                    doc = db.get(Document, document_id)
+                    doc = document_for(db, run_id, document_id)
                     graph = copy.deepcopy(doc.graph)
                     graph["analysis"]["sections"][str(index)] = result
                     graph["analysis"].setdefault("grounding", {})[str(index)] = receipt
@@ -219,18 +224,20 @@ def analyze_document(factory, services, run_id, document_id, chunks):
                         f"Reviewed {len(saved_sections)}/{len(sections)} sections. Every passage is included; section {index + 1} contributed {len(result['concepts'])} candidate learning goals.",
                         "retrieve_evidence",
                     )
+            except RunStopped:
+                raise
             except Exception as exc:
                 failures.append(exc)
     if failures:
         raise failures[0]
     if complete:
         with factory.begin() as db:
-            doc = db.get(Document, document_id)
+            doc = document_for(db, run_id, document_id)
             if doc.status != "published":
                 doc.status = "prepared"
         return
     with factory() as db:
-        doc = db.get(Document, document_id)
+        doc = document_for(db, run_id, document_id)
         # Existing concepts and IDs anchor upgrades, retaining all saved evidence.
         catalog = (
             copy.deepcopy(doc.graph.get("concepts", []))
@@ -252,7 +259,7 @@ def analyze_document(factory, services, run_id, document_id, chunks):
                 edges.append({**edge, "prerequisite": prerequisite, "dependent": dependent})
                 edge_pairs.add((prerequisite, dependent))
         with factory.begin() as db:
-            doc = db.get(Document, document_id)
+            doc = document_for(db, run_id, document_id)
             graph = copy.deepcopy(doc.graph)
             graph["analysis"]["sections"][str(index)]["mapping"] = mapping
             doc.graph = graph
@@ -268,7 +275,7 @@ def analyze_document(factory, services, run_id, document_id, chunks):
     validate_graph(assembled)
     validate_sources(assembled, chunk_map)
     with factory.begin() as db:
-        doc = db.get(Document, document_id)
+        doc = document_for(db, run_id, document_id)
         db.scalar(select(Course).where(Course.id == doc.course_id).with_for_update())
         graph = copy.deepcopy(doc.graph)
         graph.update(assembled)

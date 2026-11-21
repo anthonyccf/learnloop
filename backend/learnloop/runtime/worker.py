@@ -14,6 +14,7 @@ from learnloop.core.errors import ServiceError
 from learnloop.persistence.database import Job, Run, now, session_factory
 from learnloop.runtime.events import run_status
 from learnloop.runtime.workflows import execute, record_failure
+from learnloop.runtime.cancellation import RunStopped
 from learnloop.services.clients import Services
 
 logger = logging.getLogger("learnloop.runtime.worker")
@@ -53,7 +54,7 @@ def _work_once(factory, services, workflow=None):
                     select(Job)
                     .where(
                         or_(
-                            Job.status == "queued",
+                            and_(Job.status == "queued", or_(Job.lease_until.is_(None), Job.lease_until <= now())),
                             and_(Job.status == "running", Job.lease_until < now()),
                         )
                     )
@@ -79,9 +80,13 @@ def _work_once(factory, services, workflow=None):
                     return False
                 locked_run = run_id
                 run = db.get(Run, run_id)
-                if run.snapshot["status"] in ("completed", "waiting_for_learner"):
+                if run.snapshot["status"] in ("completed", "waiting_for_learner", "stopped"):
                     job.status = "done"
                     return True
+                if run.snapshot["workflow"] == "course_preparation":
+                    run.input = {**run.input, "_cooperative_stop": True,
+                                 "_expert_usage_enabled": True,
+                                 "_expert_usage_prior_unknown": run.input.get("_expert_usage_prior_unknown", job.attempts > 0 and not run.input.get("_expert_usage_enabled"))}
                 exhausted = job.attempts >= settings.worker_max_attempts
                 if exhausted:
                     job.status = "failed"
@@ -107,20 +112,33 @@ def _work_once(factory, services, workflow=None):
                     run = db.get(Run, run_id)
                     job.status = "paused" if run.snapshot["status"] == "paused" else "done"
                     job.lease_until = None
+            except RunStopped:
+                with factory.begin() as db:
+                    job = db.scalar(select(Job).where(Job.run_id == run_id).with_for_update())
+                    job.status, job.lease_until = "done", None
+                    run_status(db, run_id, "stopped", "Stopped by user. Saved work is retained.")
             except ServiceError as exc:
-                record_failure(factory, run_id, exc, settings.worker_max_attempts)
+                try:
+                    record_failure(factory, run_id, exc, settings.worker_max_attempts, settings.worker_retry_delay_seconds)
+                except RunStopped:
+                    with factory.begin() as db:
+                        job = db.scalar(select(Job).where(Job.run_id == run_id).with_for_update())
+                        job.status, job.lease_until = "done", None
+                        run_status(db, run_id, "stopped", "Stopped by user. Saved work is retained.")
             except Exception as exc:
                 # Exception strings can contain SQL parameters or provider content.
                 logger.error("Run %s failed (%s)", run_id, type(exc).__name__)
-                record_failure(
-                    factory,
-                    run_id,
-                    ServiceError(
-                        "processing_failed",
-                        "Processing was interrupted. Retry from the saved checkpoint.",
-                    ),
-                    settings.worker_max_attempts,
-                )
+                try:
+                    record_failure(
+                        factory, run_id,
+                        ServiceError("processing_failed", "Processing was interrupted. Retry from the saved checkpoint."),
+                        settings.worker_max_attempts, settings.worker_retry_delay_seconds,
+                    )
+                except RunStopped:
+                    with factory.begin() as db:
+                        job = db.scalar(select(Job).where(Job.run_id == run_id).with_for_update())
+                        job.status, job.lease_until = "done", None
+                        run_status(db, run_id, "stopped", "Stopped by user. Saved work is retained.")
             return True
         finally:
             if locked_run and not sqlite:

@@ -106,10 +106,16 @@ def test_restarted_run_inspection_shows_changes_and_freezes_them(stack):
     endpoint = f'/api/documents/{doc_id}/inspection'
     initial = client.get(endpoint, params={'run_id': run_id, 'kind': 'concepts'}).json()
     assert initial['inspectionScope'] == 'changes'
-    assert all(count == 0 for count in initial['counts'].values())
+    assert all(initial['counts'][kind] == 0 for kind in ('concepts', 'lessons', 'questions'))
+    assert initial['counts']['source_chunks'] == initial['savedCounts']['source_chunks']
+    assert initial['counts']['embeddings'] == initial['savedCounts']['embeddings']
     assert initial['savedCounts']['source_chunks'] > 0
     assert initial['savedCounts']['embeddings'] > 0
     assert initial['savedCounts']['concepts'] > 0
+    for kind in ('source_chunks', 'embeddings'):
+        view = client.get(endpoint, params={'run_id': run_id, 'kind': kind}).json()
+        assert view['total'] == initial['savedCounts'][kind]
+        assert len(view['items']) == view['total']
 
     with factory.begin() as db:
         doc = db.get(Document, doc_id)
@@ -126,11 +132,13 @@ def test_restarted_run_inspection_shows_changes_and_freezes_them(stack):
         ('concepts', 'summary', 'Newly generated summary'),
         ('lessons', 'title', 'Newly generated lesson'),
         ('questions', 'prompt', 'Newly generated question?'),
-        ('source_chunks', 'text', 'Newly generated passage'),
     ]:
         view = client.get(endpoint, params={'run_id': run_id, 'kind': kind}).json()
         assert view['inspectionMode'] == 'live'
         assert view['total'] == 1 and view['items'][0][field] == expected
+    chunks = client.get(endpoint, params={'run_id': run_id, 'kind': 'source_chunks'}).json()
+    assert chunks['total'] == initial['savedCounts']['source_chunks'] + 1
+    assert any(item['text'] == 'Newly generated passage' for item in chunks['items'])
     with factory.begin() as db:
         run_status(db, run_id, 'completed', 'Snapshot complete')
         doc = db.get(Document, doc_id)

@@ -20,6 +20,50 @@ def mock_client(monkeypatch, handler):
     )
 
 
+def test_slide_image_reaches_provider_and_is_metered(monkeypatch):
+    from learnloop.core.schemas import SlideTranscription
+    from learnloop.runtime.usage import MeteredServices, UsageRecorder
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["model"] == "test/vision"
+        content = body["messages"][1]["content"]
+        assert json.loads(content[0]["text"]) == {"page": 3}
+        assert content[1] == {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,cG5n"},
+        }
+        return httpx.Response(
+            200,
+            json={
+                "model": "test/vision",
+                "usage": {"cost": 0.002},
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '{"visibleText":"Equation on page 3","unreadable":""}'
+                        },
+                    }
+                ],
+            },
+        )
+
+    mock_client(monkeypatch, handler)
+    settings = get_settings().model_copy(
+        update={"expert_vision_model": "test/vision", "llm_api_key": SecretStr("test")}
+    )
+    usage = UsageRecorder()
+    services = PromptConfiguredServices(
+        MeteredServices(Services(settings), usage), {"model": "test/text"}
+    )
+    output = services.generate(
+        "Expert", "Transcribe.", {"page": 3}, SlideTranscription, image_png=b"png"
+    )
+    assert output.visibleText == "Equation on page 3"
+    assert len(usage.calls()) == 1 and usage.calls()[0]["costUsd"] == 0.002
+
+
 @pytest.mark.parametrize("shape", ["embedding", "embeddings"])
 def test_embedding_accepts_singular_and_standard_array(monkeypatch, shape):
     vector = [0.01] * 1024

@@ -17,7 +17,8 @@ class Template(BaseModel):
     enabledTools: list[str]
     model: str
     temperature: float | None
-    basePrompts: Literal["v1", "v2"] = "v1"
+    basePrompts: Literal["v1", "v2"] = "v2"
+    organizationVariant: Literal["baseline", "rules", "procedural", "exemplar"] = "baseline"
     createdAt: str
     updatedAt: str
     isDefault: bool = False
@@ -35,11 +36,12 @@ def build_router(context):
     @router.get("/api/agent-templates/builtin-prompts")
     def list_builtin_prompts(
         agent: Literal["expert", "tutor", "assessing"],
-        version: Literal["v1", "v2"] = "v1",
+        version: Literal["v1", "v2"] = "v2",
+        variant: Literal["baseline", "rules", "procedural", "exemplar"] = "baseline",
         owner=Depends(context.owner),
     ):
         del owner
-        return builtin_prompts(agent, version)
+        return builtin_prompts(agent, version, variant)
 
     @router.get("/api/agent-templates")
     def list_templates(owner=Depends(context.owner)):

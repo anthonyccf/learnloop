@@ -23,7 +23,7 @@ from learnloop.runtime.handoffs import HandoffRequest
 
 def lesson_for(db, course_id, release_id, concept_id):
     pages, chunks = {}, {}
-    for chunk in released_chunks(db, course_id, release_id).values():
+    for chunk in released_chunks(db, course_id, release_id, extracted_only=True).values():
         pages.setdefault(chunk["document_id"], {})[chunk["id"]] = chunk["page"]
         chunks.setdefault(chunk["document_id"], {})[chunk["id"]] = {"text": chunk["text"]}
     for doc in released_documents(db, course_id, release_id):

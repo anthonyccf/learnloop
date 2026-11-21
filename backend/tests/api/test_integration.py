@@ -5,12 +5,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from learnloop.api import create_app
-from learnloop.persistence.database import Activity, Chunk, Submission
+from learnloop.persistence.database import Activity, Chunk, Job, Submission, now
 from learnloop.runtime.events import VALIDATORS
 from learnloop.runtime.worker import work_once
 from tests.conftest import COURSE_TEXT
 
 pytestmark = pytest.mark.integration
+
+
+def release_retry(factory, run_id):
+    with factory.begin() as db:
+        db.scalar(select(Job).where(Job.run_id == run_id)).lease_until = now()
 
 
 def prepare(stack):
@@ -271,17 +276,10 @@ def test_partial_material_backfill_retries_without_regenerating_saved_lesson(sta
     monkeypatch.setattr(services, "generate", fail_generation)
     work_once(factory, services)
     snapshot = client.get(f"/api/agent-activity/runs/{run['runId']}").json()
-    assert snapshot["status"] == "failed"
+    assert snapshot["status"] == "queued"
     assert len(client.get(f"/api/courses/{course_id}/materials").json()["materials"]) == 1
     monkeypatch.setattr(services, "generate", original_generate)
-    client.post(
-        f"/api/agent-activity/runs/{run['runId']}/commands",
-        json={
-            "kind": "retry",
-            "operationId": "resume-materials",
-            "expectedVersion": snapshot["recordVersion"],
-        },
-    ).raise_for_status()
+    release_retry(factory, run["runId"])
     work_once(factory, services)
     learning = client.get(f"/api/courses/{course_id}/materials").json()
     assert len(learning["materials"]) == 2
@@ -385,15 +383,8 @@ def test_section_review_resume_only_reprocesses_failed_section(stack, monkeypatc
     ).json()
     work_once(factory, services)
     run = client.get(f"/api/agent-activity/runs/{upload['runId']}").json()
-    assert run["status"] == "failed" and len(calls) >= 3
-    client.post(
-        f"/api/agent-activity/runs/{upload['runId']}/commands",
-        json={
-            "kind": "retry",
-            "operationId": "resume-sections",
-            "expectedVersion": run["recordVersion"],
-        },
-    ).raise_for_status()
+    assert run["status"] == "queued" and len(calls) >= 3
+    release_retry(factory, upload["runId"])
     assert work_once(factory, services)
     assert client.get(f"/api/agent-activity/runs/{upload['runId']}").json()["status"] == "completed"
     assert calls[2] == 2 and all(count == 1 for section, count in calls.items() if section != 2)
@@ -423,18 +414,23 @@ def test_unresolved_sources_are_blocked_before_publication_or_practice(stack):
     )
 
 
-def test_retry_receipts_and_sse_replay_match_frontend_contract(stack):
+def test_retry_receipts_and_sse_replay_match_frontend_contract(stack, monkeypatch):
+    from learnloop.core.errors import ServiceError
     client, factory, services, settings = stack
     course_id = client.post("/api/courses", json={"title": "Recovery"}).json()["id"]
     uploaded = client.post(
         f"/api/courses/{course_id}/documents",
         files={"file": ("notes.txt", COURSE_TEXT.encode())},
     ).json()
-    services.fail_next = True
+    original_generate = services.generate
+    def reject_once(*args, **kwargs):
+        monkeypatch.setattr(services, "generate", original_generate)
+        raise ServiceError("review_rejected", "Please revise.", False)
+    monkeypatch.setattr(services, "generate", reject_once)
     work_once(factory, services)
     run_id = uploaded["runId"]
     run = client.get(f"/api/agent-activity/runs/{run_id}").json()
-    assert run["status"] == "failed" and run["allowedCommands"] == ["retry"]
+    assert run["status"] == "needs_review" and run["allowedCommands"] == ["retry"]
     endpoint = f"/api/agent-activity/runs/{run_id}/commands"
     command = {
         "kind": "retry",
@@ -516,7 +512,7 @@ def test_course_preparation_retry_sends_failure_feedback_to_expert(stack, monkey
     assert client.get(f"/api/agent-activity/runs/{uploaded['runId']}").json()["status"] == "completed"
 
 
-def test_course_preparation_allows_five_retries(stack, monkeypatch):
+def test_course_preparation_allows_three_retries(stack, monkeypatch):
     from learnloop.core.errors import ServiceError
     from learnloop.core.schemas import SectionGraph
     from learnloop.persistence.database import Job
@@ -532,12 +528,12 @@ def test_course_preparation_allows_five_retries(stack, monkeypatch):
         raise ServiceError("review_rejected", "Please revise this section.", False)
 
     monkeypatch.setattr(services, "generate", reject)
-    for attempt in range(6):
+    for attempt in range(4):
         assert work_once(factory, services)
         run = client.get(f"/api/agent-activity/runs/{uploaded['runId']}").json()
-        expected_commands = ["retry"] if attempt < 5 else []
+        expected_commands = ["retry"] if attempt < 3 else []
         assert run["allowedCommands"] == expected_commands
-        if attempt < 5:
+        if attempt < 3:
             response = client.post(
                 f"/api/agent-activity/runs/{uploaded['runId']}/commands",
                 json={
@@ -550,7 +546,7 @@ def test_course_preparation_allows_five_retries(stack, monkeypatch):
 
     with factory() as db:
         job = db.query(Job).filter_by(run_id=uploaded["runId"]).one()
-        assert job.attempts == 6
+        assert job.attempts == 4
 
 
 def test_stale_version_rejected_and_new_session_resumes_existing_activity(stack):

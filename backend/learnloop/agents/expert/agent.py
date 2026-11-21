@@ -4,16 +4,22 @@ SQL checkpoints preserve completed work across worker retries. Model output is
 checked by shared domain/runtime code before publication.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from sqlalchemy import select
+from sqlalchemy.orm import load_only
 
 from learnloop.agents.expert.analysis import analyze_document
 from learnloop.agents.expert.curriculum import prepare_curriculum
 from learnloop.agents.expert.deduplication import deduplicate_course
-from learnloop.agents.expert.materials import prepare_materials
+from learnloop.agents.expert.materials import flagged_summary, prepare_materials
 from learnloop.agents.expert.organization import organize_course
 from learnloop.core.domain import chunk_id, extract
+from learnloop.core.errors import ServiceError
 from learnloop.persistence.database import Chunk, Document, Run
 from learnloop.persistence.releases import publish_course
+from learnloop.persistence.run_materials import document_for
+from learnloop.runtime.cancellation import RunStopped
 from learnloop.runtime.events import run_status, step
 
 
@@ -21,7 +27,7 @@ def prepare_graph(factory, services, run_id):
     settings = services.settings
     with factory.begin() as db:
         run = db.get(Run, run_id)
-        doc = db.get(Document, run.input["document_id"])
+        doc = document_for(db, run_id, run.input["document_id"])
         if doc.graph.get("analysis", {}).get("complete") and not run.input.get(
             "review_all_sections"
         ):
@@ -48,15 +54,9 @@ def prepare_graph(factory, services, run_id):
         has_chunks = (
             db.scalar(select(Chunk.id).where(Chunk.document_id == doc.id).limit(1)) is not None
         )
-        if not has_chunks or doc.status not in (
-            "extracted",
-            "indexed",
-            "needs_review",
-            "prepared",
-            "published",
-        ):
+        if not has_chunks:
             pages, extracted = extract(
-                doc.content, doc.filename, settings.max_pages, settings.max_chunks
+                db.get(Document, document_id).content, doc.filename, settings.max_pages, settings.max_chunks
             )
             for ordinal, passage in enumerate(extracted):
                 db.add(
@@ -70,6 +70,9 @@ def prepare_graph(factory, services, run_id):
                 )
             doc.pages, doc.status = pages, "extracted"
         db.flush()
+        if run.input.get("run_scoped"):
+            source = db.get(Document, document_id, options=[load_only(Document.pages, Document.status)])
+            source.pages = doc.pages
         chunks = [
             {
                 "id": c.id,
@@ -87,7 +90,10 @@ def prepare_graph(factory, services, run_id):
     if not indexed:
         services.index(chunks, owner_id)
         with factory.begin() as db:
-            db.get(Document, document_id).status = "indexed"
+            document_for(db, run_id, document_id).status = "indexed"
+            source = db.get(Document, document_id, options=[load_only(Document.pages, Document.status)])
+            if source.status in ("uploaded", "queued", "extracted"):
+                source.status = "indexed"
             step(
                 db,
                 run_id,
@@ -102,6 +108,9 @@ def prepare_graph(factory, services, run_id):
 def run(factory, services, run_id):
     with factory() as db:
         run_input = db.get(Run, run_id).input
+    if run_input.get("run_scoped"):
+        from learnloop.agents.expert.run_hierarchy import prepare_run
+        return prepare_run(factory, services, run_id)
     if run_input.get("rebuild_course"):
         # Discover every document before planning a shared curriculum.
         document_ids = run_input["document_ids"]
@@ -114,21 +123,10 @@ def run(factory, services, run_id):
         deduplicate_course(factory, services, run_id, document_id)
         organize_course(factory, services, run_id, document_id)
         prepare_curriculum(factory, services, run_id, document_id)
-        source_warnings = []
-        for document_id in document_ids:
-            with factory.begin() as db:
-                current_run = db.get(Run, run_id)
-                current_run.input = {**current_run.input, "document_id": document_id}
-            source_warnings.extend(prepare_materials(factory, services, run_id, document_id, finalize=False))
-        with factory.begin() as db:
-            if not source_warnings:
-                publish_course(db, db.get(Run, run_id).course_id, run_id)
-            run_status(
-                db,
-                run_id,
-                "completed",
-                "Preparation finished with source review warnings. Review the affected course materials before publication." if source_warnings else "The connected learning pyramid, lessons and tests are ready.",
-            )
+        source_warnings = prepare_course_materials(factory, services, run_id, document_ids)
+        with factory() as db:
+            course_id = db.get(Run, run_id).course_id
+        finish(factory, run_id, course_id, source_warnings)
         return
     prepare_graph(factory, services, run_id)
     with factory() as db:
@@ -136,25 +134,56 @@ def run(factory, services, run_id):
     deduplicate_course(factory, services, run_id, document_id)
     organize_course(factory, services, run_id, document_id)
     prepare_curriculum(factory, services, run_id, document_id)
-    # A new upload may change scopes of existing lessons as well.
     with factory() as db:
-        course_id = db.get(Document, document_id).course_id
-        document_ids = list(
-            db.scalars(
-                select(Document.id).where(
-                    Document.course_id == course_id, Document.status.in_(("prepared", "published"))
-                )
+        course_id = document_for(db, run_id, document_id).course_id
+    source_warnings = prepare_course_materials(factory, services, run_id, [document_id])
+    finish(factory, run_id, course_id, source_warnings)
+
+
+def prepare_course_materials(factory, services, run_id, document_ids):
+    """Every document's lessons share one pool, so no document waits on another's slowest lesson."""
+    if not document_ids:
+        return []
+    with (
+        ThreadPoolExecutor(max_workers=services.settings.expert_material_workers) as lessons,
+        ThreadPoolExecutor(max_workers=len(document_ids)) as documents,
+    ):
+        futures = [
+            documents.submit(
+                prepare_materials, factory, services, run_id, document_id, False, lessons
             )
-        )
-    source_warnings = []
-    for document_id in document_ids:
-        with factory.begin() as db:
-            current_run = db.get(Run, run_id)
-            current_run.input = {**current_run.input, "document_id": document_id}
-        source_warnings.extend(prepare_materials(factory, services, run_id, document_id, finalize=False))
+            for document_id in document_ids
+        ]
+        flagged, failures = [], []
+        for future in futures:
+            try:
+                flagged.extend(future.result())
+            except RunStopped:
+                raise
+            except Exception as exc:
+                failures.append(exc)
+    if failures:
+        raise failures[0]
+    return flagged
+
+
+def finish(factory, run_id, course_id, flagged):
     with factory.begin() as db:
-        if not source_warnings:
-            publish_course(db, course_id, run_id)
+        if flagged:
+            run_status(db, run_id, "needs_review", flagged_summary(len(flagged)))
+            return
+        try:
+            with db.begin_nested():
+                publish_course(db, course_id, run_id)
+        except ServiceError as error:
+            if error.code != "course_not_ready":
+                raise
+            run_status(
+                db, run_id, "needs_review",
+                "The selected material was prepared, but the updated course could not be published. "
+                f"{error.message} Other materials may also need to be refreshed before publishing.",
+            )
+            return
         run_status(
-            db, run_id, "completed", "Preparation finished with source review warnings. Review the affected course materials before publication." if source_warnings else "The connected learning pyramid, lessons and tests are ready."
+            db, run_id, "completed", "The connected learning pyramid, lessons and tests are ready."
         )

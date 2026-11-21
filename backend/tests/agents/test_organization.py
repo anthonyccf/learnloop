@@ -99,6 +99,65 @@ def test_stale_course_organization_is_not_used():
     assert current_organization([Doc()], changed) is None
 
 
+def test_new_hierarchy_run_starts_without_previous_topics_and_keeps_release_until_run(stack):
+    from learnloop.core.schemas import TopicOrganization
+    from tests.api.test_integration import prepare
+
+    client, factory, services, _ = stack
+    course_id, uploaded = prepare(stack)
+    before = client.get(f"/api/courses/{course_id}").json()["graph"]["topics"]
+    assert before
+    seen = []
+    generate = services.generate
+
+    def observe(role, instruction, context, output):
+        if output is TopicOrganization:
+            seen.append(context["existingTopicMap"])
+        return generate(role, instruction, context, output)
+
+    services.generate = observe
+    receipt = client.post(
+        f"/api/documents/{uploaded['documentId']}/analyze",
+        json={"force": True, "hierarchyMode": "new"},
+    )
+    assert receipt.status_code == 202
+    with factory() as db:
+        assert db.get(Run, receipt.json()["runId"]).input["hierarchy_mode"] == "new"
+    assert client.get(f"/api/courses/{course_id}").json()["graph"]["topics"] == before
+    assert work_once(factory, services)
+    assert seen == [[]]
+    assert client.get(f"/api/agent-activity/runs/{receipt.json()['runId']}").json()["status"] == "completed"
+
+
+def test_previous_run_hierarchy_is_pinned_and_used_as_starting_point(stack):
+    from learnloop.core.schemas import TopicOrganization
+    from tests.api.test_integration import prepare
+
+    client, factory, services, _ = stack
+    course_id, uploaded = prepare(stack)
+    sources = client.get(f"/api/courses/{course_id}/hierarchy-sources").json()
+    assert sources and sources[0]["runId"]
+    source = sources[0]
+    observed = []
+    generate = services.generate
+
+    def observe(role, instruction, context, output):
+        if output is TopicOrganization:
+            observed.append(context["existingTopicMap"])
+        return generate(role, instruction, context, output)
+
+    services.generate = observe
+    endpoint = f"/api/documents/{uploaded['documentId']}/analyze"
+    assert client.post(endpoint, json={"force": True, "hierarchySourceReleaseId": "missing"}).status_code == 422
+    receipt = client.post(endpoint, json={"force": True, "hierarchySourceReleaseId": source["releaseId"]})
+    assert receipt.status_code == 202
+    with factory() as db:
+        assert db.get(Run, receipt.json()["runId"]).input["hierarchy_source_topics"] == source["topics"]
+    assert work_once(factory, services)
+    assert observed and observed[0] == [{"id": t["id"], "parentId": t.get("parentId"), "title": t["title"], "summary": t["summary"], "conceptIds": t["conceptIds"]} for t in source["topics"]]
+    assert client.get(f"/api/agent-activity/runs/{receipt.json()['runId']}").json()["status"] == "completed"
+
+
 def test_normalization_removes_reversed_duplicates_and_prerequisite_overlap():
     topics, relationships = organization()
     original = copy.deepcopy(relationships)

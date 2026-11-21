@@ -145,7 +145,7 @@ export default function ExpertEvaluationPage() {
       {selectedTemplates.length > 0 && <section className="expert-card expert-config-comparison" aria-labelledby="expert-config-comparison-title">
         <div className="expert-card-heading"><div><h2 id="expert-config-comparison-title">Configuration comparison</h2><p>Inspect the selected prompt and model settings side by side.</p></div></div>
         <div className="expert-config-table-wrap"><table className="expert-config-table"><thead><tr><th>Setting</th>{selectedTemplates.map((template) => <th key={template.id}>{template.name}</th>)}</tr></thead><tbody>
-          <tr><th>Base prompts</th>{selectedTemplates.map((template) => <td key={template.id}>{template.basePrompts ?? "v1"}</td>)}</tr>
+          <tr><th>Course structure</th>{selectedTemplates.map((template) => <td key={template.id}>{template.organizationVariant ?? "baseline"}</td>)}</tr>
           <tr><th>Model</th>{selectedTemplates.map((template) => <td key={template.id}>{template.model}</td>)}</tr>
           <tr><th>Temperature</th>{selectedTemplates.map((template) => <td key={template.id}>{formatTemplateTemperature(template.temperature)}</td>)}</tr>
           {promptStagesByAgent[agent].map((stage) => <tr key={stage.id}><th>{stage.label}</th>{selectedTemplates.map((template) => <td key={template.id} className="expert-config-prompt">{template.prompts[stage.id]}</td>)}</tr>)}

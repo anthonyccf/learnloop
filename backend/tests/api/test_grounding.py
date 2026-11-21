@@ -89,7 +89,7 @@ def test_invalid_materials_are_flagged_before_saving_or_serving(stack, monkeypat
     ).json()
     assert work_once(factory, services)
     assert (
-        client.get(f"/api/agent-activity/runs/{upload['runId']}").json()["status"] == "completed"
+        client.get(f"/api/agent-activity/runs/{upload['runId']}").json()["status"] == "needs_review"
     )
     with factory() as db:
         graph = db.get(Document, upload["documentId"]).graph

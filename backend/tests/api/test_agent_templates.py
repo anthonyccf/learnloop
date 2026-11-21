@@ -54,3 +54,44 @@ def test_assessing_template_only_changes_assessing_calls():
     assert "model" in options
     instruction, options = service.generate("Expert", "base", {}, Assessment)
     assert instruction == "base" and not options
+
+
+def test_tutor_run_applies_the_expert_template_to_expert_calls():
+    class Services:
+        settings = None
+
+        def generate(self, role, instruction, context, output, **kwargs):
+            return instruction, kwargs
+
+    class Question:
+        pass
+
+    class FillInQuestion:
+        pass
+
+    class PostLesson:
+        pass
+
+    class PlanChoice:
+        pass
+
+    tutor = template("tutor-1", "tutor")
+    tutor["prompts"]["analysis"] = "Plan this"
+    expert = template("expert-1")
+    expert["prompts"]["questions"] = "Ask this way"
+    expert["prompts"]["lesson"] = "Teach this way"
+    expert["model"] = "expert-model"
+    expert["temperature"] = 0.1
+    expert["organizationVariant"] = "rules"
+    service = PromptConfiguredServices(Services(), tutor, expert_template=expert)
+    instruction, options = service.generate("Expert", "base", {}, Question)
+    assert "Ask this way" in instruction and "Plan this" not in instruction
+    assert options["model"] == "expert-model" and options["temperature"] == 0.1
+    instruction, _ = service.generate("Expert", "base", {}, FillInQuestion)
+    assert "Ask this way" in instruction
+    instruction, _ = service.generate("Expert", "base", {}, PostLesson)
+    assert "Teach this way" in instruction and "Ask this way" not in instruction
+    instruction, options = service.generate("Tutoring", "base", {}, PlanChoice)
+    assert "Plan this" in instruction and "Ask this way" not in instruction
+    assert options["model"] is None
+    assert service.template_organization_variant() == "rules"

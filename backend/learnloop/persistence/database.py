@@ -105,6 +105,36 @@ class Document(Base):
     graph: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class SlideEvidence(Base):
+    __tablename__ = "ll_slide_evidence"
+    document_id: Mapped[str] = mapped_column(ForeignKey("ll_documents.id"), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    page: Mapped[int] = mapped_column(Integer, primary_key=True)
+    transcription: Mapped[dict] = mapped_column(JSON)
+
+
+class RunMaterial(Base):
+    """Mutable preparation checkpoints isolated by run and source document."""
+    __tablename__ = "ll_run_materials"
+    run_id: Mapped[str] = mapped_column(ForeignKey("ll_runs.id"), primary_key=True)
+    id: Mapped[str] = mapped_column(ForeignKey("ll_documents.id"), primary_key=True)
+    course_id: Mapped[str] = mapped_column(ForeignKey("ll_courses.id"))
+    filename: Mapped[str] = mapped_column(String(240))
+    sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(40))
+    pages: Mapped[int] = mapped_column(Integer)
+    graph: Mapped[dict] = mapped_column(JSON)
+
+
+class RunHierarchy(Base):
+    """Last atomically saved hierarchy and the corresponding material checkpoints."""
+    __tablename__ = "ll_run_hierarchies"
+    run_id: Mapped[str] = mapped_column(ForeignKey("ll_runs.id"), primary_key=True)
+    graph: Mapped[dict] = mapped_column(JSON)
+    documents: Mapped[list] = mapped_column(JSON)
+    ready: Mapped[bool]
+
+
 class Chunk(Base):
     __tablename__ = "ll_chunks"
     __table_args__ = (UniqueConstraint("document_id", "ordinal"),)
@@ -252,6 +282,13 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     lease_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ExpertUsageCall(Base):
+    __tablename__ = "ll_expert_usage_calls"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("ll_runs.id"), index=True)
+    data: Mapped[dict] = mapped_column(JSON)
 
 
 class Command(Base):

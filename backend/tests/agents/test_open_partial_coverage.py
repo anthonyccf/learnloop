@@ -20,7 +20,7 @@ def test_partial_open_response_requires_real_answer_evidence():
 
         def generate(self, role, instruction, context, output):
             assert output is Assessment
-            assert "a value strictly between 0 and 1" in instruction
+            assert "Between 0 and 1:" in instruction
             return Assessment(feedback="You identified the blocks; explain their mapping.", uncertain=False,
                               coverage=[{"criterionId": "mapping", "score": 0.5,
                                          "reason": "Identifies blocks but not the mapping.",

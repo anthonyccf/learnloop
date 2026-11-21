@@ -1,6 +1,9 @@
 import json
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from learnloop.evaluation.artifacts import digest, freeze, thaw
+from learnloop.evaluation.runner import exam
 from learnloop.pseudo_progress import progress
 
 
@@ -67,6 +70,18 @@ def test_projects_live_and_completed_progress_without_hidden_content(tmp_path):
     final = progress(tmp_path, setup, job, "completed")[0]
     assert final["status"] == "completed" and final["verifiedTargetActivities"] == 3
     assert final["postScore"] == 0.9
+    assert final["examProgress"] is None
+    (root / "exam-progress.json").write_text(
+        json.dumps({"phase": "pre", "completed": 4, "total": 15, "prompt": "hidden exam"}),
+        encoding="utf-8",
+    )
+    running = progress(tmp_path, setup, job, "running")[0]
+    assert running["examProgress"] is None
+    (root / "result.json").unlink()
+    (root / "trace.json").unlink()
+    during_exam = progress(tmp_path, setup, job, "running")[0]
+    assert during_exam["examProgress"] == {"phase": "pre", "completed": 4, "total": 15}
+    assert "hidden exam" not in json.dumps(during_exam)
 
 
 def test_retry_progress_preserves_original_attempt_history(tmp_path):
@@ -97,3 +112,31 @@ def test_never_started_or_interrupted_episodes_are_not_called_complete(tmp_path)
     root = tmp_path / "episodes" / digest(["learner", "adaptive"])[:16]
     root.mkdir(parents=True)
     assert progress(tmp_path, setup, job, "failed")[0]["status"] == "interrupted"
+
+
+def test_exam_reports_question_counts_without_leaking_prompts():
+    class Stub:
+        def respond(self, provider, concept, question, phase, at):
+            return SimpleNamespace(choiceId="a"), None
+
+        def record_score(self, correct):
+            self.correct = correct
+
+    question = {
+        "difficulty": "basic",
+        "correctChoiceId": "a",
+        "prompt": "hidden exam prompt",
+        "rubric": [{"weight": 1, "choiceScores": {"a": 1}}],
+    }
+    seen = []
+    results = exam(
+        {"pre": [{"id": "q1", "conceptId": "c", "question": question}]},
+        "pre",
+        Stub(),
+        None,
+        datetime.now(UTC),
+        on_progress=lambda completed, total: seen.append((completed, total)),
+    )
+    assert seen == [(0, 1), (1, 1)]
+    assert results[0]["correct"] is True
+    assert "hidden exam prompt" not in json.dumps(seen)

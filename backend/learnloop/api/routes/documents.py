@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, select
 
+from learnloop.agents.expert.manual_review import approve_draft, flagged_lessons
 from learnloop.agents.expert.materials import (
     MATERIALS_VERSION,
     material_valid,
@@ -15,12 +16,14 @@ from learnloop.agents.expert.materials import (
     starter_complete,
 )
 from learnloop.api.dependencies import ApiContext
+from learnloop.core.errors import ServiceError
 from learnloop.core.prompt_versions import prompt_version
-from learnloop.core.schemas import DocumentAnalyzeRequest, DocumentRename
+from learnloop.core.schemas import DocumentAnalyzeRequest, DocumentRename, LessonRegeneration
 from learnloop.persistence.database import (
     Chunk,
     ChunkEmbedding,
     Course,
+    CourseRelease,
     Document,
     Run,
 )
@@ -57,7 +60,13 @@ def build_router(context: ApiContext):
             db.refresh(doc)
             prompt_template = body.promptTemplate if body else None
             force = body.force if body else False
-            if doc.graph.get("analysis", {}).get("complete") and not force and not prompt_template:
+            source_release_id = body.hierarchySourceReleaseId if body else None
+            if source_release_id and body.hierarchyMode != "continue":
+                raise HTTPException(422, "A previous hierarchy can only be used in continue mode.")
+            source_release = db.get(CourseRelease, source_release_id) if source_release_id else None
+            if source_release_id and (not source_release or source_release.course_id != doc.course_id or not source_release.run_id or not source_release.payload.get("graph", {}).get("topics")):
+                raise HTTPException(422, "The selected run has no saved hierarchy for this course.")
+            if doc.graph.get("analysis", {}).get("complete") and not force and not prompt_template and not source_release_id and (not body or body.hierarchyMode != "new"):
                 return {"status": "ready"}
             for run in db.scalars(select(Run).where(Run.course_id == doc.course_id)):
                 if run.input.get("document_id") == doc.id and run.snapshot["status"] in (
@@ -74,6 +83,9 @@ def build_router(context: ApiContext):
                     "document_id": doc.id,
                     "review_all_sections": True,
                     "inspection_changes_only": bool(force or prompt_template),
+                    "hierarchy_mode": body.hierarchyMode if body else "continue",
+                    "hierarchy_source_release_id": source_release_id,
+                    "hierarchy_source_topics": source_release.payload["graph"]["topics"] if source_release else None,
                 },
             )
             if prompt_template or force:
@@ -237,7 +249,7 @@ def build_router(context: ApiContext):
                         raise HTTPException(409, "No saved inspection snapshot is available for this run. Snapshots are saved when new runs stop or finish.")
                     inspection_mode = "snapshot"
                 baseline = run.input.get("_inspection_baselines", {}).get(doc.id)
-                if baseline is not None and view is None:
+                if view is None and (baseline is not None or run.input.get("run_scoped")):
                     view = inspection_snapshots(db, run).get(doc.id)
             graph = view["graph"] if view else doc.graph or {}
             doc_status = view["status"] if view else doc.status
@@ -325,9 +337,6 @@ def build_router(context: ApiContext):
             if changed is not None:
                 lesson_items = [item for item in lesson_items if item["id"] in changed["lessons"]]
                 question_items = [item for item in question_items if item["id"] in changed["questions"]]
-                visible_chunks = [c for c in snapshot_chunks if c.id in changed["source_chunks"]]
-                visible_embeddings = [c for c in snapshot_chunks if c.id in changed["embeddings"]]
-                chunk_count, embedding_count = len(visible_chunks), len(visible_embeddings)
             counts = {
                 "source_chunks": chunk_count,
                 "concepts": len(visible_concepts),
@@ -336,7 +345,7 @@ def build_router(context: ApiContext):
                 "embeddings": embedding_count,
             }
             if kind == "source_chunks":
-                selected = (visible_chunks if changed is not None else snapshot_chunks)[offset:offset + limit] if view else list(
+                selected = snapshot_chunks[offset:offset + limit] if view else list(
                     db.scalars(
                         select(Chunk)
                         .where(Chunk.document_id == doc.id)
@@ -372,7 +381,7 @@ def build_router(context: ApiContext):
                     for chunk in selected
                 ]
             elif kind == "embeddings":
-                selected = [(c, snapshot_embeddings[c.id]) for c in (visible_embeddings if changed is not None else snapshot_chunks) if c.id in snapshot_embeddings][offset:offset + limit] if view else db.execute(
+                selected = [(c, snapshot_embeddings[c.id]) for c in snapshot_chunks if c.id in snapshot_embeddings][offset:offset + limit] if view else db.execute(
                     select(Chunk, ChunkEmbedding)
                     .join(ChunkEmbedding, ChunkEmbedding.chunk_id == Chunk.id)
                     .where(Chunk.document_id == doc.id)
@@ -590,6 +599,7 @@ def build_router(context: ApiContext):
                     "pages": view["pages"] if view else doc.pages,
                     "missingTextPages": missing_text_pages,
                     "analysisComplete": graph.get("analysis", {}).get("complete", False),
+                    "lessonsReady": graph.get("lessonsReady"),
                     "coverage": graph.get("coverage"),
                 },
                 "counts": counts,
@@ -625,7 +635,11 @@ def build_router(context: ApiContext):
     def document_review(document_id: str, principal=Depends(owner)):
         with factory() as db:
             doc = owned(db, Document, document_id, principal)
-            graph = {key: value for key, value in doc.graph.items() if key != "resources"}
+            graph = {
+                key: value
+                for key, value in doc.graph.items()
+                if key not in ("resources", "reviewDrafts")
+            }
             chunks = {
                 c.id: {"text": c.text}
                 for c in db.scalars(select(Chunk).where(Chunk.document_id == doc.id))
@@ -636,5 +650,75 @@ def build_router(context: ApiContext):
                 "resources": graph,
                 "learningMaterials": public_materials(doc, source_chunks=chunks),
             }
+
+    def document_chunks(db, document_id):
+        return {
+            c.id: {"text": c.text}
+            for c in db.scalars(select(Chunk).where(Chunk.document_id == document_id))
+        }
+
+    def active_run(db, doc):
+        for run in db.scalars(select(Run).where(Run.course_id == doc.course_id)):
+            if run.snapshot["status"] in ("queued", "running", "paused"):
+                return run
+        return None
+
+    @router.get("/api/documents/{document_id}/flagged-lessons")
+    def list_flagged_lessons(document_id: str, principal=Depends(owner)):
+        with factory() as db:
+            doc = owned(db, Document, document_id, principal)
+            return {
+                "documentId": doc.id,
+                "lessons": flagged_lessons(doc.graph, document_chunks(db, doc.id)),
+            }
+
+    @router.post("/api/documents/{document_id}/flagged-lessons/{concept_id}/approve")
+    def approve_flagged_lesson(document_id: str, concept_id: str, principal=Depends(owner)):
+        with factory.begin() as db:
+            doc = owned(db, Document, document_id, principal)
+            course = lock_course(db, doc.course_id)
+            db.refresh(doc)
+            if active_run(db, doc):
+                raise HTTPException(409, "Wait for the current preparation run to finish.")
+            try:
+                doc.graph = approve_draft(doc.graph, concept_id, document_chunks(db, doc.id), principal)
+            except ServiceError as error:
+                raise HTTPException(409, error.message) from error
+            remaining = sum(
+                len({c["id"] for c in d.graph.get("concepts", [])} & set(d.graph.get("sourceIssues", {})))
+                for d in db.scalars(select(Document).where(Document.course_id == doc.course_id))
+            )
+            if remaining:
+                return {"status": "approved", "remaining": remaining}
+            # Publication revalidates the whole course through the normal pipeline.
+            run = new_run(db, course, "course_preparation", {"document_id": doc.id})
+            return {"status": "approved", "remaining": 0, "runId": run.id}
+
+    @router.post("/api/documents/{document_id}/flagged-lessons/{concept_id}/regenerate", status_code=202)
+    def regenerate_flagged_lesson(
+        document_id: str, concept_id: str, body: LessonRegeneration, principal=Depends(owner)
+    ):
+        with factory.begin() as db:
+            doc = owned(db, Document, document_id, principal)
+            course = lock_course(db, doc.course_id)
+            db.refresh(doc)
+            if concept_id not in doc.graph.get("sourceIssues", {}):
+                raise HTTPException(409, "This lesson is not waiting for manual review.")
+            if active_run(db, doc):
+                raise HTTPException(409, "Wait for the current preparation run to finish.")
+            saved = doc.graph.get("reviewDrafts", {}).get(concept_id, {})
+            feedback = {
+                "previousFeedback": saved.get("feedback")
+                or {"message": doc.graph["sourceIssues"][concept_id].get("message")},
+            }
+            if body.notes.strip():
+                feedback["reviewerNotes"] = body.notes.strip()
+            run = new_run(
+                db,
+                course,
+                "course_preparation",
+                {"document_id": doc.id, "materialReviewFeedback": {concept_id: feedback}},
+            )
+            return {"runId": run.id, "status": "queued"}
 
     return router

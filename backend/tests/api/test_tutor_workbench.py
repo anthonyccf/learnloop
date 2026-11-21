@@ -344,6 +344,27 @@ def test_brain_map_reports_effective_status_at_each_level(stack):
     assert view["evidence"][concept["id"]]["basic"]["state"] == "demonstrated"
 
 
+def test_purge_hierarchy_keeps_course_content_and_old_release(stack):
+    client, factory, services, settings = stack
+    course_id, _ = prepare(stack)
+    before = client.get(f"/api/courses/{course_id}").json()
+    url = f"/api/courses/{course_id}/hierarchy/purge"
+    response = client.post(url, json={"expectedReleaseId": before["release"]["id"]})
+    assert response.status_code == 200, response.text
+    after = client.get(f"/api/courses/{course_id}").json()
+    assert after["release"]["version"] == before["release"]["version"] + 1
+    assert after["graph"]["topics"] == []
+    assert after["graph"]["concepts"] == before["graph"]["concepts"]
+    assert after["graph"]["prerequisites"] == before["graph"]["prerequisites"]
+    assert client.post(url, json={"expectedReleaseId": before["release"]["id"]}).status_code == 409
+    with factory() as db:
+        from learnloop.persistence.releases import get_release
+        assert get_release(db, course_id, before["release"]["id"]).payload["graph"]["topics"] == before["graph"]["topics"]
+    restored = client.post(f"/api/courses/{course_id}/hierarchy", json={"expectedReleaseId": after["release"]["id"], "topics": before["graph"]["topics"]})
+    assert restored.status_code == 200, restored.text
+    assert client.get(f"/api/courses/{course_id}").json()["graph"]["topics"] == before["graph"]["topics"]
+
+
 def test_hierarchy_publish_keeps_concepts_memory_and_pinned_session(stack):
     client, _, _, _ = stack
     course_id, _ = prepare(stack)

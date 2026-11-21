@@ -54,7 +54,7 @@ def compose_graph(documents):
         by_id = {c["id"]: c for c in concepts}
         return {
             "concepts": curriculum_order(
-                [by_id[id] for topic in organization["topics"] for id in topic["conceptIds"]],
+                [by_id[id] for topic in organization["topics"] for id in topic["conceptIds"]] if organization["topics"] else list(by_id.values()),
                 organization["prerequisites"],
             ),
             "prerequisites": organization["prerequisites"],

@@ -2,94 +2,103 @@
 
 from itertools import zip_longest
 
-from learnloop.agents.grounding import generate_grounded
-from learnloop.core.domain import validate_graph
-from learnloop.core.grounding import validate_sources
-from learnloop.core.schemas import DifficultyMaterials, Graph
+from pydantic import Field, ValidationError
+
+from learnloop.agents.expert.materials import material_content
+from learnloop.agents.expert.slide_evidence import with_slide_evidence
+from learnloop.core.domain import target_difficulty, validate_graph
+from learnloop.core.errors import ServiceError
+from learnloop.core.grounding import remap_sources, source_ids, validate_sources
+from learnloop.core.schemas import Concept, Graph, Lesson, PostLesson, Question
 from learnloop.evaluation.artifacts import checkpoint, digest, freeze, prompt_key
 from learnloop.evaluation.metrics import analyze
 from learnloop.evaluation.prepare import author_exams, validate_exams
 from learnloop.evaluation.provider import Provider, usage
-from learnloop.evaluation.runner import run_episode
 from learnloop.evaluation.schema import ExperimentConfig, Passage, Unit
-from learnloop.evaluation.variants import instruction
+from learnloop.pseudo_control import raise_if_stopped
+from learnloop.pseudo_workbench import WorkbenchSession, drive_episode
 
 
-def make_unit(setup, release, count):
-    if setup["material"]["id"] == "__all__":
-        documents = release["documents"]
-        if count < len(documents):
-            raise ValueError("At least one concept per published material is required.")
-        originals = []
-        seen = set()
-        for layer in zip_longest(*(d["graph"]["concepts"] for d in documents)):
-            for concept in layer:
-                if concept is not None and concept["id"] not in seen:
-                    originals.append(concept)
-                    seen.add(concept["id"])
-        originals = originals[:count]
-        total_concepts = len(seen)
-        covered = {
-            release["chunks"][source["chunkId"]]["document_id"]
-            for concept in originals
-            for source in concept["sources"]
-        }
-        if any(doc["id"] not in covered for doc in documents):
-            raise ValueError(
-                "The selected concepts do not cite every material; choose a larger concept limit."
-            )
-    else:
-        doc = next(d for d in release["documents"] if d["id"] == setup["material"]["id"])
-        all_concepts = doc["graph"]["concepts"]
-        originals = all_concepts[:count]
-        total_concepts = len(all_concepts)
-    if not originals:
-        raise ValueError("The selected published material has no concepts.")
-    mapping = {c["id"]: f"c{i + 1:02}" for i, c in enumerate(originals)}
+class WorkbenchConcept(Concept):
+    """Workbench concept ids are document-scoped and do not use the research slug."""
+
+    id: str = Field(min_length=1, max_length=100)
+
+
+class WorkbenchGraph(Graph):
+    concepts: list[WorkbenchConcept] = Field(min_length=1)
+
+
+def published_unit(setup, release, count):
+    """Sample the published course sequence and adapt Workbench packs for the simulator."""
+    material_id = setup["material"]["id"]
+    documents = [d for d in release["documents"] if material_id in ("__all__", d["id"])]
+    catalog = release["graph"]["concepts"]
+    scopes = []
+    for document in documents:
+        graph = document["graph"]
+        ids = {c["id"] for c in graph["concepts"]} | set(graph.get("conceptAliases", {}).values())
+        scopes.append([c["id"] for c in catalog if c["id"] in ids])
+    if not scopes or any(not scope for scope in scopes):
+        raise ValueError("Each selected material needs published concepts before it can be tested.")
+    # Sample across files, then present the chosen goals in published order.
+    sampled = dict.fromkeys(id for row in zip_longest(*scopes) for id in row if id is not None)
+    chosen = set(list(sampled)[:count])
+    if any(chosen.isdisjoint(scope) for scope in scopes):
+        raise ValueError("Choose a larger concept limit to cover every selected material.")
+    originals = [c for c in catalog if c["id"] in chosen]
+    mapping = {c["id"]: c["id"] for c in originals}
+    resources = {
+        id: material_content(pack)
+        for document in release["documents"]
+        for id, pack in document["graph"].get("resources", {}).items()
+        if id in mapping
+    }
+    if resources.keys() != chosen:
+        raise ValueError(
+            "The selected concepts need lessons and questions published from Workbench."
+        )
     selected_ids = {s["chunkId"] for c in originals for s in c["sources"]}
+    selected_ids.update(source_ids(list(resources.values())))
     links = [e for e in release["graph"]["prerequisites"] if e["dependent"] in mapping]
+    chunks = with_slide_evidence(release["chunks"], release.get("slideEvidence"))
+    edges = []
     for edge in links:
-        if edge["prerequisite"] in mapping:
-            selected_ids.update(edge.get("sourceChunkIds", []))
-            if edge.get("source"):
-                selected_ids.add(edge["source"]["chunkId"])
-    passages = {id: f"p{i + 1:02}" for i, id in enumerate(sorted(selected_ids))}
+        if edge["prerequisite"] not in mapping:
+            continue
+        source = edge.get("source")
+        if not source:
+            source_id = edge["sourceChunkIds"][0]
+            source = {"chunkId": source_id, "quote": chunks[source_id]["text"][:200]}
+        selected_ids.add(source["chunkId"])
+        edges.append(
+            {
+                "prerequisite": mapping[edge["prerequisite"]],
+                "dependent": mapping[edge["dependent"]],
+                "source": source,
+            }
+        )
+    passages = {chunk_id: chunk_id for chunk_id in sorted(selected_ids)}
     concepts = [
         {
             "id": mapping[c["id"]],
             "title": c["title"],
             "summary": c["summary"],
-            "sources": [
-                {"chunkId": passages[s["chunkId"]], "quote": s["quote"]} for s in c["sources"]
-            ],
-            "targetDifficulty": c.get("targetDifficulty", "intermediate"),
+            "sources": remap_sources(c["sources"], passages),
+            "targetDifficulty": target_difficulty(c),
         }
         for c in originals
     ]
-    edges = []
-    for edge in links:
-        if edge["prerequisite"] not in mapping:
-            continue
-        source_id = (edge.get("sourceChunkIds") or [edge.get("source", {}).get("chunkId")])[0]
-        source = edge.get("source") or {
-            "chunkId": source_id,
-            "quote": release["chunks"][source_id]["text"][:200],
-        }
-        edges.append(
-            {
-                "prerequisite": mapping[edge["prerequisite"]],
-                "dependent": mapping[edge["dependent"]],
-                "source": {"chunkId": passages[source["chunkId"]], "quote": source["quote"]},
-            }
-        )
-    graph = Graph.model_validate({"concepts": concepts, "prerequisites": edges})
+    graph = WorkbenchGraph.model_validate(
+        {"concepts": concepts, "prerequisites": remap_sources(edges, passages)}
+    )
     source_passages = [
         Passage.model_validate(
             {
                 "id": new_id,
-                "text": release["chunks"][id]["text"],
-                "page": release["chunks"][id]["page"],
-                "document": release["chunks"][id]["label"],
+                "text": chunks[id]["text"],
+                "page": chunks[id]["page"],
+                "document": chunks[id]["label"],
             }
         )
         for id, new_id in passages.items()
@@ -98,9 +107,9 @@ def make_unit(setup, release, count):
     warnings = []
     if any(e["prerequisite"] not in mapping for e in links):
         warnings.append("Prerequisites outside the selected subset are not simulated.")
-    if len(originals) < total_concepts:
+    if len(originals) < len(sampled):
         warnings.append(
-            f"This test samples {len(originals)} of {total_concepts} published concepts in the selected material scope."
+            f"This test samples {len(originals)} of {len(sampled)} published concepts in the selected material scope."
         )
     unit = Unit.model_construct(
         id="exploratory-unit",
@@ -112,14 +121,42 @@ def make_unit(setup, release, count):
     )
     validate_graph(graph)
     validate_sources(graph, unit.chunks())
-    return unit
+    materials = {}
+    for id in mapping:
+        saved = remap_sources(resources[id], passages)
+        lesson = saved["lesson"]
+        levels = saved.get("lessonsByDifficulty", {})
+        pack = {
+            "lesson": levels.get("intermediate", lesson),
+            "basicLesson": levels.get("basic", lesson),
+            "advancedLesson": levels.get("advanced", lesson),
+            "tests": saved["tests"],
+        }
+        validate_pack(pack, unit.chunks())
+        materials[mapping[id]] = {"content": pack}
+    return unit, materials
+
+
+def validate_pack(pack, chunks, heldout=()):
+    # Earlier tests stored PostLesson drafts. New tests use the released Lesson
+    # format, and both share the same question schema.
+    for key in ("lesson", "basicLesson", "advancedLesson"):
+        lesson = pack[key]
+        (Lesson if "explanation" in lesson else PostLesson).model_validate(lesson)
+    questions = [Question.model_validate(q) for q in pack["tests"]]
+    if not questions or any(not q.rubric or not q.referenceAnswer for q in questions):
+        raise ValueError("Practice questions need private reference answers and rubrics.")
+    validate_sources(pack, chunks)
+    if any(prompt_key(q.model_dump()) in heldout for q in questions):
+        raise ValueError("Training question overlaps a held-out test.")
 
 
 class RoutedProvider:
     """Apply captured templates/models without changing simulator or test-author prompts."""
 
-    def __init__(self, base, templates, learner=None):
+    def __init__(self, base, templates, learner=None, training_prompts=None):
         self.base, self.templates, self.learner = base, templates, learner
+        self.training_prompts = training_prompts
 
     def __getattr__(self, name):
         return getattr(self.base, name)
@@ -128,7 +165,7 @@ class RoutedProvider:
         agent = {"Expert": "expert", "Tutoring": "tutor", "Assessing": "assessing"}.get(role)
         template = self.templates.get(agent) if agent else None
         stages = {
-            ("Expert", "DifficultyMaterials"): ("lesson", "questions"),
+            ("Expert", "Question"): ("questions",),
             ("Tutoring", "PlanChoice"): ("analysis",),
             ("Assessing", "Assessment"): ("analysis", "lesson", "questions"),
         }.get((role, output.__name__), ())
@@ -137,6 +174,12 @@ class RoutedProvider:
             prompt += "\n\nSelected workbench template instructions:\n" + "\n\n".join(
                 filter(None, additions)
             )
+        if role == "TestAuthor" and output.__name__ == "ExamDraft" and self.training_prompts:
+            prompt += " Use different prompts and scenarios from the supplied practice questions."
+            context = {
+                **context,
+                "practicePrompts": self.training_prompts[context["concept"]["id"]],
+            }
         old_model, old_temp = self.base.model, self.base.temperature
         try:
             requested = (
@@ -150,9 +193,25 @@ class RoutedProvider:
                 self.base.model = requested
             if template and template.get("temperature") is not None:
                 self.base.temperature = template["temperature"]
-            return self.base.generate(role, prompt, context, output)
+            try:
+                return self.base.generate(role, prompt, context, output)
+            except ValidationError as error:
+                if role == "Expert" and output is Question:
+                    raise ServiceError(
+                        "invalid_model_output",
+                        "Write a valid source-backed practice question.",
+                        False,
+                    ) from error
+                raise
         finally:
             self.base.model, self.base.temperature = old_model, old_temp
+
+
+def episode_limits(concept_count, activities):
+    exam_calls = 6 * concept_count
+    max_calls = max(64, exam_calls + concept_count + 12 * activities + 16)
+    max_tokens = max(250000, max_calls * 5000)
+    return max_calls, max_tokens
 
 
 def run(setup, release, output, config, settings, provider_cls=Provider, reused=None):
@@ -166,21 +225,17 @@ def run(setup, release, output, config, settings, provider_cls=Provider, reused=
         unit = Unit.model_construct(
             **{
                 **raw_unit,
-                "graph": Graph.model_validate(raw_unit["graph"]),
+                "graph": WorkbenchGraph.model_validate(raw_unit["graph"]),
                 "passages": [Passage.model_validate(item) for item in raw_unit["passages"]],
             }
         )
         validate_graph(unit.graph)
         validate_sources(unit.graph, unit.chunks())
     else:
-        unit = make_unit(setup, release, config["concepts"])
+        unit, materials = published_unit(setup, release, config["concepts"])
     freeze(output / "unit.json", unit.model_dump())
     freeze(output / "setup.json", setup)
-    templates = setup.get("templates") or {}
-    versions = {
-        key: (templates.get(agent) or {}).get("basePrompts", "v1")
-        for key, agent in (("expert", "expert"), ("tutor", "tutor"), ("assessor", "assessing"))
-    }
+    versions = {key: "v2" for key in ("expert", "tutor", "assessor")}
     if reused:
         status("Loading prepared material")
         exams, artifact = reused["exams"], reused["expert"]
@@ -190,94 +245,71 @@ def run(setup, release, output, config, settings, provider_cls=Provider, reused=
             or artifact.get("graph") != unit.graph.model_dump()
         ):
             raise ValueError("Prepared material does not match the frozen unit.")
-        heldout = {
-            prompt_key(item["question"]) for phase in ("pre", "post") for item in exams[phase]
-        }
-        for concept in unit.graph.concepts:
-            pack = DifficultyMaterials.model_validate(artifact["materials"][concept.id]["content"])
-            validate_sources(pack, unit.chunks())
-            if any(prompt_key(q.model_dump()) in heldout for q in pack.tests):
-                raise ValueError("Training question overlaps a held-out test.")
-        freeze(output / "exams.json", exams)
-        freeze(output / "expert.json", artifact)
         preparation_usage = usage([])
     else:
-        status("Preparing independent tests")
         prep_base = provider_cls(
             settings,
             output / "preparation-calls",
-            max_calls=80 * config["concepts"],
-            max_tokens=400000 * config["concepts"],
+            max_calls=80 * len(unit.graph.concepts),
+            max_tokens=400000 * len(unit.graph.concepts),
         )
         prep = RoutedProvider(prep_base, setup["templates"])
-        exams = author_exams(unit, prep, output / "exams.json")["payload"]
-        heldout = {
-            prompt_key(item["question"]) for phase in ("pre", "post") for item in exams[phase]
+        training_prompts = {
+            concept.id: [
+                question["prompt"] for question in materials[concept.id]["content"]["tests"]
+            ]
+            for concept in unit.graph.concepts
         }
-        materials = {}
-        for concept in unit.graph.concepts:
-            status("Preparing teaching material: " + concept.title)
-            pack, _ = generate_grounded(
-                prep,
-                "Expert",
-                instruction("Expert", "grounded", versions["expert"]),
-                {
-                    "concept": concept.model_dump(),
-                    "passages": [
-                        {"chunkId": p.id, "text": p.text}
-                        for p in unit.passages
-                        if p.id in {s.chunkId for s in concept.sources}
-                    ],
-                },
-                DifficultyMaterials,
-                unit.chunks(),
-            )
-            if any(prompt_key(q.model_dump()) in heldout for q in pack.tests):
-                raise ValueError("Training question overlaps a held-out test.")
-            materials[concept.id] = {"content": pack.model_dump()}
-        artifact = {"mode": "exploratory", "graph": unit.graph.model_dump(), "materials": materials}
-        freeze(output / "expert.json", artifact)
+        artifact = {
+            "mode": "exploratory",
+            "materialSource": setup.get("materialSource", "workbench_generated"),
+            "workbenchRunId": setup.get("workbenchRunId"),
+            "graph": unit.graph.model_dump(),
+            "materials": materials,
+        }
+        raise_if_stopped(output)
+        status("Preparing independent exams")
+        prep.training_prompts = training_prompts
+        exams = author_exams(unit, prep, output / "exams.json")["payload"]
         preparation_usage = usage(prep.calls)
+    heldout = {prompt_key(item["question"]) for phase in ("pre", "post") for item in exams[phase]}
+    for concept in unit.graph.concepts:
+        validate_pack(artifact["materials"][concept.id]["content"], unit.chunks(), heldout)
+    if reused:
+        freeze(output / "exams.json", exams)
+    freeze(output / "expert.json", artifact)
+    max_calls, max_tokens = episode_limits(len(unit.graph.concepts), config["activities"])
     config_obj = ExperimentConfig(
         activities=config["activities"],
         repeats=1,
-        maxCalls=64,
-        maxTokens=250000,
+        maxCalls=max_calls,
+        maxTokens=max_tokens,
         model=settings.llm_model,
     )
     variants = {"expert": "grounded", "tutor": "utility", "assessor": "weighted"}
-    changed = {key: version for key, version in versions.items() if version != "v1"}
-    if changed:
-        variants["promptVersions"] = changed
-    conditions = (
-        ("adaptive", "fixed_sequence", "memory_free") if config["baselines"] else ("adaptive",)
-    )
+    variants["promptVersions"] = versions
     results = []
-    for learner in setup["learners"]:
-        spec = {
-            "ability": [learner["basic"], learner["intermediate"], learner["advanced"]],
-            "hint": learner["hint"],
-            "gain": learner["gain"],
-            "delay": learner["delaySeconds"] * 1000,
-            "misconceptions": learner["misconceptions"],
-        }
-        for condition in conditions:
-            status(f"Testing {learner['name']}: {condition}")
-            root = output / "episodes" / digest([learner["id"], condition])[:16]
-            base = provider_cls(settings, root / "calls", max_calls=64, max_tokens=250000)
-            result = run_episode(
-                unit,
-                exams,
-                artifact,
-                variants,
-                learner["id"],
-                0,
-                condition,
-                config_obj,
-                RoutedProvider(base, setup["templates"], learner),
-                root,
-                mode="exploratory",
-                student_spec=spec,
+    with WorkbenchSession(
+        settings, release, unit, setup, output / "workbench.db", artifact["materials"]
+    ) as session:
+        session.run_path = output
+        for learner in setup["learners"]:
+            raise_if_stopped(output)
+            spec = {
+                "ability": [learner["basic"], learner["intermediate"], learner["advanced"]],
+                "hint": learner["hint"],
+                "gain": learner["gain"],
+                "delay": learner["delaySeconds"] * 1000,
+                "misconceptions": learner["misconceptions"],
+                "simulator": config.get("simulator", "controlled"),
+            }
+            status(f"Testing {learner['name']}")
+            root = output / "episodes" / digest([learner["id"], "adaptive"])[:16]
+            base = provider_cls(
+                settings, root / "calls", max_calls=max_calls, max_tokens=max_tokens
+            )
+            result = drive_episode(
+                session, unit, exams, artifact, variants, learner, config_obj, base, root, spec
             )
             result["learnerName"] = learner["name"]
             results.append(result)

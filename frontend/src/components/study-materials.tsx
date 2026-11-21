@@ -181,7 +181,7 @@ function StudyMaterials({ onPractice, onGeneralPractice }: { onPractice: (concep
 }
 
 /** Shared reading content for Learn and the map's concept modal. */
-export function LessonContents({ material }: { material: LearningMaterial }) {
+export function LessonContents({ material }: { material: Pick<LearningMaterial, "lesson"> }) {
   return <LessonMath.Provider value={material.lesson.equations.map(equation => equation.latex)}>
           <MathText block className="lesson-explanation lesson-post" text={material.lesson.explanation} />
           {material.lesson.equations.map((equation, i) => <div className="lesson-equation" key={i}><div dangerouslySetInnerHTML={{ __html: katex.renderToString(equation.latex, { displayMode: true, throwOnError: false, trust: false, strict: "ignore", maxExpand: 500, maxSize: 20 }) }} /><p><MathText text={equation.explanation} /></p></div>)}

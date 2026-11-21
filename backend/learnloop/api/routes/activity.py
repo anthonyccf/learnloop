@@ -16,11 +16,37 @@ from learnloop.core.schemas import (
 from learnloop.persistence.database import (
     Command,
     Course,
+    ExpertUsageCall,
     Job,
     Run,
     RunEvent,
 )
 from learnloop.runtime.events import run_status
+
+
+def stop_expert_job(db, run_id, *, allow_finished=False):
+    job = db.scalar(select(Job).where(Job.run_id == run_id).with_for_update())
+    run = db.scalar(select(Run).where(Run.id == run_id).with_for_update())
+    if run.snapshot.get("workflow") != "course_preparation":
+        raise HTTPException(404, "Expert run not found.")
+    if run.snapshot["status"] not in ("queued", "running", "paused"):
+        if allow_finished:
+            return {"status": run.snapshot["status"]}
+        raise HTTPException(409, "This run has already stopped or finished.")
+    if run.input.get("_stop_requested"):
+        return {"status": "stopping"}
+    if not job:
+        raise HTTPException(409, "No worker job exists for this run.")
+    if job.status == "running":
+        if not run.input.get("_cooperative_stop"):
+            raise HTTPException(409, "This run started on an older worker and cannot be stopped safely. Restart the worker after it finishes to enable stopping future runs.")
+        run_status(db, run_id, "running", "Stopping after current requests finish. Saved work is retained.")
+        run.input = {**run.input, "_stop_requested": True}
+        return {"status": "stopping"}
+    job.status, job.lease_until = "done", None
+    run.input = {**run.input, "_stop_requested": True}
+    run_status(db, run_id, "stopped", "Stopped by user. Saved work is retained.")
+    return {"status": "stopped"}
 
 
 def build_router(context: ApiContext):
@@ -35,6 +61,18 @@ def build_router(context: ApiContext):
     def list_runs(course_id: str, principal=Depends(owner)):
         with factory() as db:
             owned(db, Course, course_id, principal)
+            calls_by_run = {}
+            for run_id, data in db.execute(select(ExpertUsageCall.run_id, ExpertUsageCall.data).join(Run, Run.id == ExpertUsageCall.run_id).where(Run.course_id == course_id, Run.owner_id == principal)):
+                calls_by_run.setdefault(run_id, []).append(data)
+
+            def expert_usage(run):
+                if not run.input.get("_expert_usage_enabled"):
+                    return None
+                calls = calls_by_run.get(run.id, [])
+                known = [call["costUsd"] for call in calls if call.get("costUsd") is not None]
+                return {"reportedCostUsd": sum(known), "reportedCalls": len(known),
+                        "unreportedCalls": len(calls) - len(known),
+                        "priorUsageUnknown": bool(run.input.get("_expert_usage_prior_unknown"))}
             return [
                 {
                     "id": r.id,
@@ -44,10 +82,14 @@ def build_router(context: ApiContext):
                     "startedAt": r.input.get("_started_at")
                     or next((e["at"] for e in r.snapshot.get("events", [])), None),
                     "documentId": (r.input.get("_inspection_document_ids") or [r.input.get("document_id")])[0],
+                    "documentIds": r.input.get("_inspection_document_ids", []),
+                    "hierarchyMode": r.input.get("hierarchy_mode", "continue") if r.snapshot["workflow"] == "course_preparation" else None,
                     "sessionId": r.input.get("session_id"),
                     "templateName": (r.input.get("prompt_template") or {}).get("name"),
                     "model": (r.input.get("prompt_template") or {}).get("model"),
                     "temperature": (r.input.get("prompt_template") or {}).get("temperature"),
+                    "stopSupported": bool(r.input.get("_cooperative_stop")) or r.snapshot["status"] in ("queued", "paused"),
+                    "expertUsage": expert_usage(r) if r.snapshot["workflow"] == "course_preparation" else None,
                     "modelsUsed": r.input.get("_models_used", []),
                 }
                 for r in db.scalars(
@@ -59,6 +101,12 @@ def build_router(context: ApiContext):
     def get_run(run_id: str, principal=Depends(owner)):
         with factory() as db:
             return owned(db, Run, run_id, principal).snapshot
+
+    @router.post("/api/agent-activity/runs/{run_id}/stop")
+    def stop_expert_run(run_id: str, principal=Depends(owner)):
+        with factory.begin() as db:
+            owned(db, Run, run_id, principal)
+            return stop_expert_job(db, run_id)
 
     @router.get("/api/agent-activity/runs/{run_id}/evaluation")
     def evaluate_run(run_id: str, principal=Depends(owner)):

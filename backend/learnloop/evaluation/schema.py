@@ -60,6 +60,21 @@ class StudentReply(StrictModel):
     learningGain: float = Field(ge=0, le=0.15)
 
 
+class StudentBlankAnswer(StrictModel):
+    id: str = Field(min_length=1, max_length=60)
+    text: str = Field(min_length=1, max_length=400)
+
+
+class MixedStudentReply(StrictModel):
+    choiceIds: list[Literal["a", "b", "c", "d"]] = Field(default_factory=list, max_length=4)
+    blanks: list[StudentBlankAnswer] = Field(default_factory=list, max_length=6)
+    answerText: str = Field(default="", max_length=4000)
+    reasoning: str = Field(min_length=1, max_length=600)
+    hintRequested: bool
+    memoryUpdate: str = Field(max_length=400)
+    learningGain: float = Field(ge=0, le=0.15)
+
+
 class LearningUpdate(StrictModel):
     memoryUpdate: str = Field(max_length=600)
     learningGain: float = Field(ge=0, le=0.15)

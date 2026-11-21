@@ -2,13 +2,12 @@
 
 import json
 
-from learnloop.core.schemas import Graph
 from learnloop.evaluation.artifacts import digest, runtime_hash, thaw
 from learnloop.evaluation.prepare import validate_exams
 from learnloop.evaluation.provider import Provider
-from learnloop.evaluation.runner import run_episode
 from learnloop.evaluation.schema import ExperimentConfig, Passage, Unit
-from learnloop.pseudo_experiment import RoutedProvider
+from learnloop.pseudo_experiment import WorkbenchGraph
+from learnloop.pseudo_workbench import WorkbenchSession, drive_episode
 
 
 def inputs(path, learner_id, condition, settings):
@@ -27,7 +26,7 @@ def inputs(path, learner_id, condition, settings):
     unit = Unit.model_construct(
         **{
             **raw,
-            "graph": Graph.model_validate(raw["graph"]),
+            "graph": WorkbenchGraph.model_validate(raw["graph"]),
             "passages": [Passage.model_validate(item) for item in raw["passages"]],
         }
     )
@@ -46,6 +45,9 @@ def run_retry(path, learner_id, condition, destination, settings, provider_cls=P
     setup, learner, _, manifest, config, unit, exams, artifact = inputs(
         path, learner_id, condition, settings
     )
+    if condition != "adaptive":
+        raise ValueError("Only the workbench session can be retried")
+    release = thaw(path / "input.json")["payload"]["release"]
     base = provider_cls(
         settings,
         destination / "calls",
@@ -54,17 +56,20 @@ def run_retry(path, learner_id, condition, destination, settings, provider_cls=P
         max_calls=config.maxCalls,
         max_tokens=config.maxTokens,
     )
-    return run_episode(
-        unit,
-        exams,
-        artifact,
-        manifest["variants"],
-        learner_id,
-        manifest["repeat"],
-        condition,
-        config,
-        RoutedProvider(base, setup["templates"], learner),
-        destination,
-        mode="exploratory",
-        student_spec=manifest["studentSpec"],
-    )
+    with WorkbenchSession(
+        settings, release, unit, setup, destination / "workbench.db", artifact["materials"]
+    ) as session:
+        session.run_path = path
+        session.progress_path = destination / "retry-status.json"
+        return drive_episode(
+            session,
+            unit,
+            exams,
+            artifact,
+            manifest["variants"],
+            learner,
+            config,
+            base,
+            destination,
+            manifest["studentSpec"],
+        )

@@ -69,6 +69,16 @@ def progress(path, setup, job, job_status):
                             "levelActivities": level_counts[key],
                         }
                     )
+            exam_progress = None
+            exam_path = root / "exam-progress.json"
+            if result is None and exam_path.is_file():
+                saved = json.loads(exam_path.read_text(encoding="utf-8"))
+                if saved.get("phase") in ("pre", "post") and isinstance(saved.get("total"), int):
+                    exam_progress = {
+                        "phase": saved["phase"],
+                        "completed": int(saved.get("completed") or 0),
+                        "total": saved["total"],
+                    }
             metrics = (result or {}).get("metrics") or {}
             attempt_usage = (result or {}).get("usage") or metrics
             retry_status_path = root / "retry-status.json"
@@ -130,6 +140,7 @@ def progress(path, setup, job, job_status):
                     and not (episode_root / "retry.lock").exists(),
                     "activityLimit": job["config"]["activities"],
                     "activitiesCompleted": len(events),
+                    "examProgress": exam_progress,
                     "correctAnswers": sum(e["correct"] is True for e in events),
                     "hintsUsed": sum(e["hinted"] is True for e in events),
                     "milestones": milestones,

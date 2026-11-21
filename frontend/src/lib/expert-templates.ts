@@ -1,10 +1,17 @@
 export type WorkbenchAgent = "expert" | "tutor" | "assessing";
 export type ExpertPromptStage = "analysis" | "lesson" | "questions";
 export type BasePromptVersion = "v1" | "v2";
+export type OrganizationVariant = "baseline" | "rules" | "procedural" | "exemplar";
+
+export const organizationVariants: { id: OrganizationVariant; label: string; description: string }[] = [
+  { id: "baseline", label: "Baseline · production", description: "Direct instructions for extracting concepts, reviewing relationships and planning the curriculum." },
+  { id: "rules", label: "Rules · checklist", description: "Groups constraints into rules and adds self-checks. Defines concept size using a short lesson and two questions." },
+  { id: "procedural", label: "Procedural · step by step", description: "Uses ordered steps and explicit tests, including a lesson-size test and a counterfactual prerequisite test." },
+  { id: "exemplar", label: "Exemplar · contrastive examples", description: "Shows good and bad decisions using examples from introductory statistics." },
+];
 
 export const basePromptVersions: { id: BasePromptVersion; label: string; description: string }[] = [
-  { id: "v1", label: "v1 · original", description: "The original built-in backend prompts." },
-  { id: "v2", label: "v2 · revised", description: "Revised built-in prompts with field glossaries, stricter answer-leak and evidence rules, and shared difficulty definitions." },
+  { id: "v2", label: "v2 · unified", description: "The unified built-in backend prompts." },
 ];
 
 export const workbenchAgents: { id: WorkbenchAgent; label: string }[] = [
@@ -40,6 +47,7 @@ export type AgentPromptTemplate = {
   model: string;
   temperature: number | null;
   basePrompts?: BasePromptVersion;
+  organizationVariant?: OrganizationVariant;
   createdAt: string;
   updatedAt: string;
   isDefault?: boolean;
@@ -138,33 +146,43 @@ export async function loadSharedTemplates(): Promise<AgentPromptTemplate[]> {
     }
     window.localStorage.setItem(marker, "1");
   }
-  const templates = await api<AgentPromptTemplate[]>("agent-templates");
-  // Created once, under a fixed id, so a deleted v2 template stays deleted and
+  let templates = await api<AgentPromptTemplate[]>("agent-templates");
+  let seeded = false;
+  // Created once, under a fixed id, so a deleted built-in template stays deleted and
   // overlapping page loads cannot insert another copy.
-  const v2Marker = "learnloop-v2-prompt-templates-created-v1";
-  if (window.localStorage.getItem(v2Marker)) return templates;
-  const missing = workbenchAgents.filter(({ id }) => !templates.some((template) => template.id === `builtin-v2-${id}`));
-  const now = new Date().toISOString();
-  for (const { id, label } of missing) {
-    await api("agent-templates/save", {
-      template: {
-        id: `builtin-v2-${id}`,
-        agent: id,
-        name: `${label} v2 prompts`,
-        prompts: { analysis: "", lesson: "", questions: "" },
-        enabledTools: defaultEnabledToolsByAgent[id],
-        model: "configured",
-        temperature: null,
-        basePrompts: "v2",
-        createdAt: now,
-        updatedAt: now,
-        isDefault: false,
-      },
-      importOnly: true,
-    });
+  const variantMarker = "learnloop-expert-org-variants-created-v1";
+  if (!window.localStorage.getItem(variantMarker)) {
+    const presetVariants: { id: OrganizationVariant; name: string }[] = [
+      { id: "rules", name: "Expert · Rules" },
+      { id: "procedural", name: "Expert · Procedural" },
+      { id: "exemplar", name: "Expert · Exemplar" },
+    ];
+    const missing = presetVariants.filter(({ id }) => !templates.some((template) => template.id === `builtin-org-${id}-expert`));
+    const now = new Date().toISOString();
+    for (const { id, name } of missing) {
+      await api("agent-templates/save", {
+        template: {
+          id: `builtin-org-${id}-expert`,
+          agent: "expert",
+          name,
+          prompts: { analysis: "", lesson: "", questions: "" },
+          enabledTools: defaultEnabledToolsByAgent.expert,
+          model: "configured",
+          temperature: null,
+          basePrompts: "v2",
+          organizationVariant: id,
+          createdAt: now,
+          updatedAt: now,
+          isDefault: false,
+        },
+        importOnly: true,
+      });
+      seeded = true;
+    }
+    window.localStorage.setItem(variantMarker, "1");
   }
-  window.localStorage.setItem(v2Marker, "1");
-  return missing.length ? api<AgentPromptTemplate[]>("agent-templates") : templates;
+  if (seeded) templates = await api<AgentPromptTemplate[]>("agent-templates");
+  return templates;
 }
 
 export async function saveSharedTemplate(template: AgentPromptTemplate) {

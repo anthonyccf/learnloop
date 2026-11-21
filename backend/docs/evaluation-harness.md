@@ -2,23 +2,56 @@
 
 ## Workbench controls
 
+Under **Pseudo-student tests → Test options → Student simulator**, select
+**Belief-based pilot** to try a learner that recalls individual beliefs. Reuse
+an earlier run's materials to compare it with **Controlled answers** on the
+same exams. The selection is frozen for retries. Controlled answers is the
+default for existing configurations and the research protocol.
+
+The pilot draws prior beliefs from basic lesson flashcards. For concepts
+flagged by a misconception-prone profile, the response model also phrases the
+published common mistake as a private mistaken belief. Difficulty, profile and
+elapsed time govern seeded recall. An uncertain learner can request a training
+hint with the profile's configured probability. With no recalled belief or
+delivered help, it guesses a displayed option. New beliefs must cite a
+verbatim passage from the teaching or feedback delivered in that activity.
+The model identifies which existing belief a correction replaces. Private
+episode artifacts record the quote, recalled beliefs and explanations.
+Recall strengths are pilot assumptions. Answer-policy agreement and latent
+mastery accuracy are inapplicable to this variant.
+
+For the matched novice experiment, run the following from the backend folder
+with the configured provider and a new output directory:
+
+```powershell
+python -m learnloop.evaluation.belief_pilot --seeds 1 --output ../tmp/paged-kv-pilot
+```
+
+Each seed runs both simulators with targeted and unrelated feedback, starting
+from the same paged-KV misconception. Each arm allows up to 12 provider
+attempts. The probes use fresh wording immediately and after eight simulated
+days, along with an untaught tokenizer concept. In `responses.json`,
+`recurrence` records a judge's reading of the student's explanation, blinded
+to simulator and condition. Compare this with the saved explanation and
+`correct` for the independently keyed choice. A single seed checks the
+mechanism. Calibration against real student responses requires separate data.
+
 The Workbench's separate **Pseudo-student tests** page captures a setup when a
-test starts, containing the selected published course release, material and
+test starts, containing the selected Workbench-generated materials and
 copies of selected shared templates and simulated learner profiles. Custom learner profiles include a
 response-model ID and the simulator's ability, hint, gain, timing and
-misconception parameters. Saved setups can start exploratory tests that prepare
-independent exams and teaching resources for selected concepts, then
-run the selected profiles and optional baselines. Tutor testing can instead
-reuse the frozen lessons, practice questions and held-out exams from a prior
-exploratory run of the same material and published course version. This skips
-Expert and test-author calls; the Tutor and Assessing templates and learners
-come from the newly selected setup. The Expert template in that setup does not
-change the reused materials. Expert lesson/question,
-Tutor planning and Assessing stages use the captured templates and model
-settings; Expert analysis has already happened in the published release. These
+misconception parameters. Exploratory tests load that completed Workbench
+generation as the course materials the Tutor reads. Each learner is a workbench session: auto start, the worker's lesson or
+quiz decision, a hint through Tutor chat, and the workbench answer and
+assessment path. The Tutor asks Expert for a question when the saved bank has
+nothing suitable. Held-out exams stay outside that session. A
+separate test author prepares held-out
+pre- and post-exams. An earlier test from the same material scope and generation
+can supply its frozen practice bank and exams for a repeat. The current setup
+provides the Tutor and Assessing templates and simulated learner profiles. These
 exploratory tests are not human-reviewed research and do not establish human
 learning outcomes. Prerequisites outside the selected subset are omitted.
-For all-material setups, concepts are selected round-robin from the published
+For all-material setups, concepts are selected round-robin from the Workbench
 materials and at least one source-backed concept per material is required. The
 chosen concept limit can still leave other concepts untested; the run records a
 scope warning. Prepared content can only be reused for exactly the same material
@@ -31,8 +64,8 @@ have processed it, usage and cost are marked incomplete because the provider
 did not return reliable accounting for that attempt. Retry attempts and their
 error types are recorded in the per-call ledger; response bodies are not.
 Artifacts are stored under `backend/data/pseudo-runs/` and include private test
-keys. Preparation is capped at 80 calls and 400,000 tokens per requested concept;
-each learner/condition episode is capped at 64 calls and 250,000 tokens. The
+keys. Preparation is capped at 80 calls and 400,000 tokens per sampled concept.
+Each learner/condition episode is capped at 64 calls and 250,000 tokens. The
 prepared research bundle continues to use its four fixed profiles and configured
 model. The separately retained research page exposes the prepared
 `comp7608b-inference-v2-draft` bundle, its live readiness blockers, predefined

@@ -2,7 +2,12 @@ import copy
 import time
 from datetime import UTC, datetime, timedelta
 
+from learnloop.agents.assessing.agent import assess_single_answer
+from learnloop.agents.assessing.prompts import FEEDBACK_PROMPT
+from learnloop.agents.question_review import review_question
 from learnloop.agents.rubrics import validate_assessment
+from learnloop.agents.tutoring.agent import choose_candidate
+from learnloop.agents.tutoring.prompts import PLAN_PROMPT
 from learnloop.core.domain import assess_evidence, effective_state, select_concept
 from learnloop.core.planning import candidates
 from learnloop.core.schemas import Assessment, PlanChoice, Question
@@ -14,6 +19,7 @@ from learnloop.evaluation.artifacts import (
     runtime_hash,
     write,
 )
+from learnloop.evaluation.belief_student import BeliefStudent
 from learnloop.evaluation.metrics import episode_metrics, latency_by_role
 from learnloop.evaluation.provider import BudgetExhausted, usage
 from learnloop.evaluation.simulator import Student, independent_score
@@ -31,9 +37,12 @@ def clock_evidence(evidence, at):
     return normalized
 
 
-def exam(bank, phase, student, provider, at):
+def exam(bank, phase, student, provider, at, on_progress=None):
+    items = bank[phase]
+    if on_progress:
+        on_progress(0, len(items))
     results = []
-    for item in bank[phase]:
+    for index, item in enumerate(items, 1):
         reply, _ = student.respond(provider, item["conceptId"], item["question"], phase, at)
         score = independent_score(item["question"], reply)
         student.record_score(score["correct"])
@@ -45,6 +54,8 @@ def exam(bank, phase, student, provider, at):
                 **score,
             }
         )
+        if on_progress:
+            on_progress(index, len(items))
     return results
 
 
@@ -83,7 +94,9 @@ def run_episode(
         provider.max_calls = config.maxCalls
     wall_started = time.perf_counter()
     at = datetime(2030, 1, 1, tzinfo=UTC)
-    student = Student(concepts, profile, config.seed, repeat, student_spec)
+    belief_mode = mode == "exploratory" and (student_spec or {}).get("simulator") == "belief"
+    student_type = BeliefStudent if belief_mode else Student
+    student = student_type(concepts, profile, config.seed, repeat, student_spec)
     identity = {
         "variants": variants,
         "profile": profile,
@@ -97,7 +110,9 @@ def run_episode(
         "runtimeHash": runtime_hash(),
         "studentSpec": student_spec,
         "prompts": {
-            role: instruction(role, variants[key], versions.get(key, "v1"))
+            role: (PLAN_PROMPT if role == "Tutoring" else FEEDBACK_PROMPT)
+            if mode == "exploratory" and role in ("Tutoring", "Assessing")
+            else instruction(role, variants[key], versions.get(key, "v2"))
             for role, key in [
                 ("Expert", "expert"),
                 ("Tutoring", "tutor"),
@@ -131,6 +146,9 @@ def run_episode(
         "status": "failed",
     }
     try:
+        if belief_mode:
+            student.initialize_beliefs(artifact["materials"], provider)
+            initial_hidden = student.snapshot()
         pre = exam(bank, "pre", student, provider, at)
         initial = initialize(pre)
         evidence = copy.deepcopy(initial)
@@ -149,7 +167,25 @@ def run_episode(
                     evidence, history, plan = copy.deepcopy(initial), [], {}
                     previous = None
             observed = clock_evidence(evidence, at)
-            options = candidates(artifact["graph"], observed, previous=previous)
+            memory = {}
+            if mode == "exploratory":
+                for concept in concepts:
+                    concept_id = concept["id"]
+                    records = observed.get(concept_id, {})
+                    recent = next((h for h in reversed(history) if h["conceptId"] == concept_id), None)
+                    misconceptions = recent.get("misconceptions", []) if recent else []
+                    memory[concept_id] = {
+                        "strengths": [{"difficulty": level, "status": record["state"]}
+                                      for level, record in records.items()
+                                      if record.get("state") in ("demonstrated", "review_due")],
+                        "gap": {"summary": misconceptions[0].get("description", "")}
+                               if misconceptions else None,
+                        "observation": None,
+                    }
+            goal = {"description": "Develop independent understanding of this course unit."}
+            options = candidates(artifact["graph"], observed,
+                                 goal=goal if mode == "exploratory" else None, previous=previous,
+                                 memory=memory if mode == "exploratory" else None)
             available = []
             for option in options:
                 pack = artifact["materials"][option["conceptId"]]["content"]
@@ -178,11 +214,13 @@ def run_episode(
                 order = {c["id"]: i for i, c in enumerate(concepts)}
                 selected = min(available, key=lambda c: order[c["conceptId"]])
                 rationale = "Fixed prerequisite-respecting catalog order and fixed level schedule."
+            elif mode == "exploratory":
+                selected, rationale = choose_candidate(provider, available, goal, memory)
             else:
                 # Identical fields and tools across Tutor prompts; no hidden profile/post-test input.
                 choice = provider.generate(
                     "Tutoring",
-                    instruction("Tutoring", variants["tutor"], versions.get("tutor", "v1")),
+                    instruction("Tutoring", variants["tutor"], versions.get("tutor", "v2")),
                     {
                         "goal": {
                             "description": "Develop independent understanding of this course unit."
@@ -234,6 +272,7 @@ def run_episode(
                 "selectedChoiceId": reply.choiceId,
                 "correct": reply.choiceId == q["correctChoiceId"],
                 "hintUsed": hinted,
+                "answerExplanation": q["explanation"],
                 "reasoning": reply.reasoning,
                 "rubric": [c.model_dump() for c in question.rubric],
                 "referenceAnswer": q["referenceAnswer"],
@@ -246,15 +285,23 @@ def run_episode(
                     for s in {r["chunkId"] for r in q["sources"]}
                 ],
             }
-            assessed = provider.generate(
-                "Assessing",
-                instruction("Assessing", variants["assessor"], versions.get("assessor", "v1")),
-                context,
-                Assessment,
-            )
-            coverage, score = validate_assessment(
-                question, assessed, reply.choiceId, reply.reasoning
-            )
+            if mode == "exploratory":
+                chunks = unit.chunks()
+                receipt = review_question(provider, "Assessing", q, chunks)
+                context["extendedTopic"] = receipt["status"] == "extended"
+                assessed, coverage, score = assess_single_answer(
+                    provider, question, context, reply.choiceId, reply.reasoning
+                )
+            else:
+                assessed = provider.generate(
+                    "Assessing",
+                    instruction("Assessing", variants["assessor"], versions.get("assessor", "v2")),
+                    context,
+                    Assessment,
+                )
+                coverage, score = validate_assessment(
+                    question, assessed, reply.choiceId, reply.reasoning
+                )
             correct = reply.choiceId == question.correctChoiceId
             student.record_score(correct)
             before, record = assess_evidence(
@@ -290,7 +337,11 @@ def run_episode(
                 level,
                 reply,
                 teaching,
-                {"feedback": assessed.feedback, "answerExplanation": question.explanation},
+                {
+                    "feedback": assessed.feedback,
+                    "answerExplanation": question.explanation,
+                    **({"hint": q["hint"]} if belief_mode and hinted else {}),
+                },
                 at,
             )
             evidence.setdefault(id, {})[level] = record
@@ -363,9 +414,13 @@ def run_episode(
             latencyByRole=latency_by_role(provider.calls),
         )
         result["metrics"]["simulationPolicyAgreement"] = student.adherence()
-        result["profileControlValid"] = (
-            student.adherence() is not None and student.adherence() >= config.minPolicyAgreement
-        )
+        if belief_mode:
+            # A collection of recalled beliefs has no calibrated mastery category.
+            result["metrics"].update(stateMacroF1=None, difficultyStateAccuracy=None)
+        if not belief_mode:
+            result["profileControlValid"] = (
+                student.adherence() is not None and student.adherence() >= config.minPolicyAgreement
+            )
         if mode == "research" and not result["profileControlValid"]:
             result["status"] = "simulation_invalid"
         write(

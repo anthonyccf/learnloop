@@ -11,11 +11,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
 
-from learnloop.agents.expert.prompts import RELATION_PROMPT, REVIEW_PROMPT, TOPIC_PROMPT
+from learnloop.agents.expert.prompts import TOPIC_PROMPT
+from learnloop.agents.expert.prompts_variants import organization_prompt
 from learnloop.core.domain import validate_graph
 from learnloop.core.errors import ServiceError
 from learnloop.core.schemas import CourseRelationships, TopicOrganization
-from learnloop.persistence.database import Chunk, Course, CourseRelease, Document, Run
+from learnloop.persistence.database import Chunk, Course, CourseRelease, Run
+from learnloop.persistence.run_materials import document_for, documents_for
 from learnloop.runtime.events import accept, pending, run_status, step
 
 ORGANIZATION_VERSION = 1
@@ -103,9 +105,10 @@ def constrain_review(review, proposals):
     return result, len(review["prerequisites"]) - len(result["prerequisites"])
 
 
-def validate_organization(concepts, topics, relationships, source_ids, proposals=None):
+def validate_organization(concepts, topics, relationships, source_ids, proposals=None, *, allow_ungrouped=False):
     """Hard structural checks only; semantic review is a separate model call."""
-    validate_topics(concepts, topics)
+    if not (allow_ungrouped and not topics):
+        validate_topics(concepts, topics)
     ids = {c["id"] for c in concepts}
     validate_graph({"concepts": concepts, "prerequisites": relationships["prerequisites"]})
     candidate_pairs = (
@@ -142,21 +145,19 @@ def validate_organization(concepts, topics, relationships, source_ids, proposals
 
 def organize_course(factory, services, run_id, document_id):
     with factory() as db:
-        anchor = db.get(Document, document_id)
+        anchor = document_for(db, run_id, document_id)
         documents = list(
             db.scalars(
-                select(Document)
-                .where(
-                    Document.course_id == anchor.course_id,
-                    Document.status.in_(("prepared", "published")),
-                )
-                .order_by(Document.id)
+                documents_for(db, run_id, anchor.course_id)
             )
         )
         concepts = [c for doc in documents for c in doc.graph.get("concepts", [])]
         if not concepts:
             return
-        if current_organization(documents, concepts):
+        run_input = db.get(Run, run_id).input
+        new_hierarchy = run_input.get("hierarchy_mode") == "new"
+        source_topics = run_input.get("hierarchy_source_topics")
+        if not new_hierarchy and not source_topics and (existing := current_organization(documents, concepts)) and not existing.get("hierarchyPurged"):
             return
         chunks = list(
             db.scalars(
@@ -165,16 +166,23 @@ def organize_course(factory, services, run_id, document_id):
                 .order_by(Chunk.document_id, Chunk.ordinal)
             )
         )
-        checkpoint = copy.deepcopy(db.get(Run, run_id).input.get("organizationDraft", {}))
+        checkpoint = copy.deepcopy(run_input.get("organizationDraft", {}))
         course_id = anchor.course_id
         existing = [e for doc in documents for e in doc.graph.get("prerequisites", [])]
-        latest_release = db.scalar(
-            select(CourseRelease)
-            .where(CourseRelease.course_id == course_id)
-            .order_by(CourseRelease.version.desc())
-            .limit(1)
-        )
-        previous_topics = (latest_release.payload.get("graph", {}) if latest_release else {}).get("topics", [])
+        if run_input.get("run_scoped"):
+            previous_topics = run_input.get("base_topics", [])
+        else:
+            latest_release = db.scalar(
+                select(CourseRelease)
+                .where(CourseRelease.course_id == course_id)
+                .order_by(CourseRelease.version.desc())
+                .limit(1)
+            )
+            previous_topics = (latest_release.payload.get("graph", {}) if latest_release else {}).get("topics", [])
+            if new_hierarchy:
+                previous_topics = []
+            elif source_topics:
+                previous_topics = source_topics
     signature = catalog_signature(concepts)
     if checkpoint.get("signature") != signature:
         checkpoint = {"signature": signature}
@@ -235,7 +243,11 @@ def organize_course(factory, services, run_id, document_id):
         )
     # Independent calls: neither analyst sees the other's output.
     topic_prompt = TOPIC_PROMPT
-    if previous_topics:
+    if previous_topics and run_input.get("run_scoped"):
+        topic_prompt += (" Assign only the new concept aliases in concepts. Use an existing topic ID "
+                         "for a matching branch or create a topic for a new goal. Return only groups "
+                         "containing the new concepts and their necessary parents.")
+    elif previous_topics:
         topic_prompt += "\nThis course already has a published topic map in existingTopicMap. Autonomously update the grouping to account for the new material: keep useful branches, move concepts when the combined evidence supports a better fit, and create or nest topics when needed. Preserve the IDs and meanings of concepts; reuse a topic ID when retaining that topic. No human approval is required for ordinary regrouping."
     with ThreadPoolExecutor(max_workers=2) as pool:
         tasks = []
@@ -243,7 +255,7 @@ def organize_course(factory, services, run_id, document_id):
             ("topics", topic_prompt, TopicOrganization, "Course Organizer: update course topic map"),
             (
                 "relationships",
-                RELATION_PROMPT,
+                organization_prompt(services, "RELATION_PROMPT"),
                 CourseRelationships,
                 "Relationship Analyst: connect concepts across sections",
             ),
@@ -271,7 +283,10 @@ def organize_course(factory, services, run_id, document_id):
         save(
             "review",
             services.generate(
-                "Expert", REVIEW_PROMPT, review_context, CourseRelationships
+                "Expert",
+                organization_prompt(services, "REVIEW_PROMPT"),
+                review_context,
+                CourseRelationships,
             ).model_dump(),
             "Relationship Reviewer: check essential prerequisites",
         )
@@ -353,9 +368,7 @@ def organize_course(factory, services, run_id, document_id):
         db.scalar(select(Course).where(Course.id == course_id).with_for_update())
         latest = list(
             db.scalars(
-                select(Document).where(
-                    Document.course_id == course_id, Document.status.in_(("prepared", "published"))
-                )
+                documents_for(db, run_id, course_id)
             )
         )
         if (
@@ -367,8 +380,13 @@ def organize_course(factory, services, run_id, document_id):
                 "Course concepts changed during organization. Retrying against the updated catalog.",
                 True,
             )
-        anchor = db.get(Document, document_id)
+        anchor = document_for(db, run_id, document_id)
         pending(db, run_id, "course_resources")
+        # Keep one authoritative organization for this catalog, even if an
+        # earlier run stored a matching organization on a different document.
+        for document in latest:
+            if document.id != document_id and "organization" in document.graph:
+                document.graph = {key: value for key, value in document.graph.items() if key != "organization"}
         anchor.graph = {**anchor.graph, "organization": organization}
         accept(db, run_id, "course_resources")
         step(

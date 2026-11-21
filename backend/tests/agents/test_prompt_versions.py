@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
-from learnloop.agents.expert import prompts as expert_v1
-from learnloop.agents.expert import prompts_v2 as expert_v2
+from learnloop.agents.expert import prompts as expert_prompts
 from learnloop.core.prompt_versions import prompt_version, versioned
 from learnloop.core.schemas import PyramidMaterials
 from learnloop.persistence.database import Document
@@ -14,25 +13,22 @@ def configured(version):
     return SimpleNamespace(settings=SimpleNamespace(prompt_version=version))
 
 
-def test_template_base_prompts_apply_only_to_its_role():
-    assert prompt_version(object(), "Expert") == "v1"
-    assert prompt_version(configured("v3"), "Expert") == "v1"
-    assert versioned(configured("v2"), "Tutoring", "first", "second") == "second"
-    tutor = PromptConfiguredServices(configured("v1"), {"agent": "tutor", "basePrompts": "v2"})
-    assert prompt_version(tutor, "Tutoring") == "v2"
-    assert prompt_version(tutor, "Expert") == prompt_version(tutor, "Assessing") == "v1"
+def test_prompt_version_unifies_on_v2_and_accepts_legacy_inputs():
+    assert prompt_version(object(), "Expert") == "v2"
+    assert prompt_version(configured("v1"), "Expert") == "v2"
+    assert prompt_version(configured("v3"), "Expert") == "v2"
+    assert versioned(configured("v1"), "Tutoring", "first", "second") == "second"
     legacy = PromptConfiguredServices(configured("v1"), {"agent": "assessing", "prompts": {}})
-    assert prompt_version(legacy, "Assessing") == "v1"
+    assert prompt_version(legacy, "Assessing") == "v2"
 
 
-def test_builtin_prompt_endpoint_returns_the_selected_version(stack):
+def test_builtin_prompt_endpoint_returns_unified_prompts_for_legacy_and_v2(stack):
     client = stack[0]
     v2 = client.get("/api/agent-templates/builtin-prompts?agent=expert&version=v2").json()
     v1 = client.get("/api/agent-templates/builtin-prompts?agent=expert&version=v1").json()
-    assert v2["lesson"][0]["text"] == expert_v2.PYRAMID_MATERIALS_PROMPT.strip()
-    assert v1["lesson"][0]["text"] == expert_v1.PYRAMID_MATERIALS_PROMPT.strip()
-    assert v2["lesson"][0]["text"] != v1["lesson"][0]["text"]
-    tutor = client.get("/api/agent-templates/builtin-prompts?agent=tutor&version=v2").json()
+    assert v2["lesson"][0]["text"] == expert_prompts.PYRAMID_MATERIALS_PROMPT.strip()
+    assert v1 == v2
+    tutor = client.get("/api/agent-templates/builtin-prompts?agent=tutor").json()
     assert tutor["questions"] == []
     assert "assessment_pending" in tutor["lesson"][0]["text"]
 
@@ -42,7 +38,7 @@ def test_saved_template_round_trips_base_prompts(stack):
     template = {
         "id": "v2-tutor",
         "agent": "tutor",
-        "name": "Tutor v2 prompts",
+        "name": "Tutor prompts",
         "prompts": {"analysis": "", "lesson": "", "questions": ""},
         "enabledTools": [],
         "model": "configured",
@@ -56,15 +52,18 @@ def test_saved_template_round_trips_base_prompts(stack):
     assert saved[0]["basePrompts"] == "v2"
 
 
-def test_switching_to_v2_regenerates_and_tags_materials(stack, monkeypatch):
-    client, factory, services, settings = stack
-    services.settings = settings.model_copy(update={"prompt_version": "v1"})
+def test_legacy_v1_materials_regenerate_as_v2(stack, monkeypatch):
+    client, factory, services, _ = stack
     _, upload = prepare(stack)
-    with factory() as db:
-        resources = db.get(Document, upload["documentId"]).graph["resources"]
-        assert resources and all("promptVersion" not in r for r in resources.values())
+    with factory.begin() as db:
+        doc = db.get(Document, upload["documentId"])
+        graph = dict(doc.graph)
+        resources = {
+            cid: {k: v for k, v in res.items() if k != "promptVersion"}
+            for cid, res in graph["resources"].items()
+        }
+        doc.graph = {**graph, "resources": resources}
 
-    services.settings = settings.model_copy(update={"prompt_version": "v2"})
     instructions = []
     generate = services.generate
 
@@ -79,8 +78,7 @@ def test_switching_to_v2_regenerates_and_tags_materials(stack, monkeypatch):
     run = client.get(f"/api/agent-activity/runs/{receipt['runId']}").json()
     assert run["status"] == "completed"
     assert len(instructions) == len(resources)
-    assert all(expert_v2.PYRAMID_MATERIALS_PROMPT in i for i in instructions)
-    assert not any(expert_v1.PYRAMID_MATERIALS_PROMPT in i for i in instructions)
+    assert all(expert_prompts.PYRAMID_MATERIALS_PROMPT in i for i in instructions)
     with factory() as db:
         updated = db.get(Document, upload["documentId"]).graph["resources"]
         assert all(r["promptVersion"] == "v2" for r in updated.values())
