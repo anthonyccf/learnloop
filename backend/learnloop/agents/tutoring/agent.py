@@ -265,9 +265,37 @@ def run(factory, services, run_id):
             memory_target = None
     if reviewed_receipt is None:
         output = ensure_rubric(services, output, passages)
-        reviewed_receipt = review_grounding(
-            services, "Tutoring", output, {c["id"]: c for c in passages}
-        )
+        try:
+            reviewed_receipt = review_grounding(
+                services, "Tutoring", output, {c["id"]: c for c in passages}
+            )
+        except ServiceError as error:
+            if error.code not in {"unsupported_content", "insufficient_evidence"}:
+                raise
+            # A published starter item failed live re-review; generate a fresh verified question.
+            fallback_prompts = [*prompts, output.prompt]
+            with factory() as db:
+                is_workbench = bool(db.get(Run, run_id).input.get("workbench_memory_id"))
+            if is_workbench:
+                output, passages, reviewed_receipt = request_expert_question(
+                    factory, services, run_id, session.id, course_id, content_owner_id,
+                    release_id, concept, difficulty, fallback_prompts, question_format,
+                    None, private_prompts,
+                )
+            else:
+                with factory() as db:
+                    retrieved = retrieve(
+                        db, services, course_id, content_owner_id,
+                        concept["title"] + " " + concept["summary"], release_id=release_id,
+                    )
+                output, reviewed_receipt = generate_question(
+                    services, concept, difficulty, fallback_prompts, retrieved,
+                    diagnostic=None,
+                    private_prompts=private_prompts,
+                    question_format=question_format,
+                )
+                passages = retrieved
+            on_demand = True
     reviewed_item = output.model_dump()
     with factory.begin() as db:
         # Serialize every learning mutation per course before the learner/session rows.

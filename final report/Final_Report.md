@@ -16,7 +16,7 @@ Teaching responsibilities were divided among three agents. Concept maps, lessons
 
 The application was run locally, and course records were saved in SQLite. Relevant course passages and submitted answers were sent to an external model provider when a model judgment was required. A separate evaluation tool was used to generate student responses. Throughout this report, a *live simulation* means that actual model calls were made for a simulated learner. No human learner took part in those sessions.
 
-Across the 36 completed Lecture 2 simulations, no topic with an unmet prerequisite was assigned, no practice question was repeated within an episode, and no invalid progress update was recorded. For a turn in which a prepared question was assigned and the response marked, the two agent calls together were estimated to cost US$0.0006. The simulated student’s own model calls were accounted for separately.
+Across the 36 completed Lecture 2 simulations, no topic with an unmet prerequisite was assigned, no practice question was repeated within an episode, and no invalid progress update was recorded. For a turn in which a prepared question was assigned and the response marked, the two agent calls together were estimated to cost US$0.0006. In a subsequent 27-condition comparison on Lecture 8 (108 completed belief-based episodes, 1,296 activities), the same zero-violation invariant held across all 27 prompt combinations at a total episode cost of US$1.6560 (mean US$0.0153 per episode, including the simulated student). The simulated student’s own model calls were accounted for separately.
 
 ---
 
@@ -61,7 +61,7 @@ The proposed and delivered features were compared in Table 1.
 | LangGraph | Changed | A Python dispatcher with SQL job leases and checkpoints was used (`runtime/workflows.py`). Job state was kept in the same database as learner updates so that related changes could be saved together. |
 | PostgreSQL, Qdrant, and Docker | Changed | SQLite with `sqlite-vec` was selected as the default for a setup requiring Python and npm. The earlier database adapters were retained. |
 | Token, cost, and latency records | Delivered for preparation, the Workbench, and evaluation | Each call was recorded in these runs. Individual practice requests were limited by time and token count. A session-wide dollar cap was not implemented. |
-| 27 prompt combinations, four simulated students, and two baselines | Offline comparison completed; proposed live comparison with both Tutor baselines outstanding | Nine prompt options were defined in Section 2. One combination was used in the live Lecture 2 study. Offline, 216 study episodes and 24 baseline episodes were completed (Section 5). |
+| 27 prompt combinations, four simulated students, and two baselines | 27-condition live Lecture 8 grid and offline baseline comparison completed; live comparison with both Tutor baselines outstanding | Nine prompt options were defined in Section 2. One combination was used in the live Lecture 2 study. Live on Lecture 8, all 27 Workbench prompt conditions × 4 belief-based learners (108 episodes) were completed. Offline, 216 study episodes and 24 baseline episodes were completed (Section 5). |
 | Many learners on one shared course, plus missions and rewards | Not delivered | Development was focused on source checks, grading, and saved progress. |
 
 The original aim of a learning agent that retained progress across sessions was maintained. Changes were made to the application infrastructure and to the extent of the evaluation completed. `[TEAM TODO: state whether the teaching team was notified of any change. If no notice was required, retain this paragraph.]`
@@ -325,7 +325,7 @@ The run IDs, repairs, timings, token counts, and examples from the generated map
 
 *Limits of the comparison.* Only one completed run was available per style. Source support, lesson scope, and answer keys were checked automatically. Coverage of the lecture and the validity of each prerequisite had yet to be assessed by a human reader. In particular, the maps still needed to be checked against `COMP7608B_Lec08.pdf` for missing concepts and for distinct concepts that had been merged.
 
-**Tutor and Assessing evaluation (27 planned conditions).** Three published maps were crossed with three Tutor templates and three Assessing templates (3 × 3 × 3). The Rules (`33aaf382`), Procedural (`5905514c`), and Exemplar (`96e02e2c`) maps were included. Baseline (`21568e68`) was evaluated only in the first stage. Common settings were specified for all conditions.
+**Tutor and Assessing evaluation (27 planned conditions plus 1 default reference cell).** Three published maps were crossed with three Tutor templates and three Assessing templates (3 × 3 × 3). The Rules (`33aaf382`), Procedural (`5905514c`), and Exemplar (`96e02e2c`) maps were included in the balanced 27-cell factorial grid. Separately, one uncustomized default reference cell (`e830f084`) was run under identical settings using the Baseline Expert map (`21568e68`) and the built-in `v2` Tutor and Assessing prompts without added template instructions, and was reported alongside (not pooled into) the 27-cell averages. Common settings were specified for all conditions.
 
 | Setting | Value |
 | :--- | :--- |
@@ -338,7 +338,7 @@ The run IDs, repairs, timings, token counts, and examples from the generated map
 | Student model | `openai/gpt-oss-120b`, a different model from the agents |
 | Held-out exams | No held-out pre-test or final test was administered. |
 | Temperature | Provider default |
-| Execution | Up to 4 conditions were run at a time. One retry was allowed per failed learner. |
+| Execution | Up to 4 conditions were run at a time. Up to 2 in-place retries were allowed per failed learner. |
 
 Simulated answers were written by a separate model so that the Assessing agent was given responses produced by another model. Multiple selections, filled blanks, and written answers were permitted. An item was counted as correct only when the complete set was selected, every blank was filled correctly, or full rubric credit was awarded. Partial scores were retained for analysis.
 
@@ -346,7 +346,7 @@ The first 6 concepts were selected in published order from each map. Basic conce
 
 All 12 activities were completed in a preliminary run with one novice. The run was excluded from the 27-condition comparison and was documented separately in Appendix C.
 
-For each learner episode, the number of completed activities, correct answers, hints, and demonstrated levels was recorded. Rule violations, calls, latency, and cost were also recorded. No pre-test or post-test was administered in this study. By 21 November, first-attempt results had been saved for all 108 planned episodes: 85 were completed and 23 were marked as failed. These counts describe the first attempts only. A comparison of outcomes across prompt conditions requires retries to be matched to their original episodes so that a learner is counted once.
+For each learner episode, the number of completed activities, correct answers, partial rubric scores, hints, and demonstrated levels was recorded, together with rule violations, model calls, latency, and cost. No pre-test or post-test was administered in this study. On the initial pass across all 108 scheduled episodes, 85 completed and 23 failed: 16 failed when live `GroundingReview` rejected a previously published starter question selected via `prepared_question()` without a fallback to fresh generation, 4 failed in Cells 1–4 when runtime source files changed mid-run (`runtimeHash` mismatch), and 3 failed when the Assessing agent returned a non-verbatim `responseQuote` on an open response (`invalid_response_evidence`) without a validation retry. Fifteen of the 23 failed episodes completed on an immediate in-place retry; the remaining 8 (in Cells 1–4) completed on their first retry after adding a Tutor fallback to fresh verified generation on starter-item rejection, a bounded 3-attempt quote-validation retry in Assessing, and an opt-in `--allow-runtime-change` flag to resume only failed episodes against their original frozen unit and expert materials. All 108 episodes (27 conditions × 4 learners) completed, with each learner counted once using its final completed attempt (Section 5.4 and Appendix C).
 
 
 ### 5.4 Results
@@ -372,6 +372,36 @@ In the offline study, 216 episodes were completed with scripted answers (3 Exper
 
 The adaptive Tutor was used throughout the live Lecture 2 study. The fixed-order Tutor and the Tutor without memory were checked offline only. Their relative effects on progress in live sessions were therefore not established.
 
+#### Lecture 8: 27-condition prompt comparison
+
+All 108 episodes across the 27 Workbench conditions (3 Expert maps × 3 Tutor templates × 3 Assessing templates × 4 belief-based learner profiles) completed all 12 scheduled activities (1,296 activities in total; complete token and cost records in 108/108 episodes). Across all 1,296 activities, 0 prerequisite violations, 0 invalid learner-state updates, and 0 repeated questions were recorded. Every activity remained at basic difficulty because the first 6 published concepts in all three maps were basic-layer concepts and 12 activities permitted at most two qualifying questions per concept.
+
+Overall, 1,167 of 1,296 answers (90.0%) earned full credit, with a mean rubric score of 0.928, 62 partial-credit responses, and 528 demonstrated concept–levels (mean 4.89 of 6 per episode). After every non-final incorrect response, the Tutor immediately assigned follow-up remediation on the same concept (100% immediate remediation rate across all 27 cells). Only 12 hints were requested across the 1,296 activities (mean 0.11 per episode) because the belief-based `openai/gpt-oss-120b` student read each lesson before answering and rarely reported uncertainty, even under the hint-dependent profile (4 hints across 27 episodes).
+
+The 108 completed episodes required 8,709 model calls (mean 80.6 per episode), 8.57M input tokens, 2.62M output tokens, a median episode duration of 255.4 s (mean 272.7 s), and a total cost of US$1.6560 (mean US$0.0153 per episode; range US$0.0096–0.0251). By role, Tutoring accounted for 3,822 calls (median 2.67 s, 95th percentile 3.91 s, US$0.5223), Simulator for 2,652 calls (median 2.57 s, p95 8.36 s, US$0.5208), on-demand Expert question generation and verification for 1,468 calls (median 3.46 s, p95 10.04 s, US$0.4328), and Assessing for 767 calls (median 2.93 s, p95 4.10 s, US$0.1801). Excluding the simulated student, LearnLoop’s three agents averaged US$0.0105 per 12-activity episode. Novice episodes averaged more Expert calls (26.8 calls, US$0.0194/episode) than the other three profiles (8.9–9.7 calls, US$0.0139–0.0141/episode) because the novice ran first in each cell and populated newly generated non-single-choice questions into the cell bank for reuse by subsequent learners.
+
+| Factor / group | Episodes | Correct / 12 (mean ± SD) | Mean rubric | Partial / ep | Hints / ep | Demonstrated / ep | Retried eps | Mean cost (US$) |
+| :--- | ---: | :---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Expert · Rules** | 36 | 11.06 ± 0.63 | 0.946 | 0.53 | 0.22 | 5.06 | 13 | 0.0171 |
+| **Expert · Procedural** | 36 | 10.58 ± 0.91 | 0.896 | 0.31 | 0.00 | 4.69 | 1 | 0.0139 |
+| **Expert · Exemplar** | 36 | 10.78 ± 1.20 | 0.943 | 0.89 | 0.11 | 4.92 | 9 | 0.0151 |
+| **Tutor · Learner-focused** | 36 | 10.42 ± 0.94 | 0.910 | 0.83 | 0.14 | 4.58 | 9 | 0.0161 |
+| **Tutor · Prerequisite-focused** | 36 | 11.08 ± 0.60 | 0.947 | 0.50 | 0.11 | 5.06 | 5 | 0.0144 |
+| **Tutor · Balanced** | 36 | 10.92 ± 1.13 | 0.927 | 0.39 | 0.08 | 5.03 | 9 | 0.0155 |
+| **Assessing · Correctness-focused** | 36 | 10.86 ± 0.99 | 0.929 | 0.50 | 0.14 | 5.00 | 8 | 0.0156 |
+| **Assessing · Context-aware** | 36 | 11.03 ± 0.91 | 0.936 | 0.39 | 0.11 | 5.08 | 10 | 0.0155 |
+| **Assessing · Conservative** | 36 | 10.53 ± 0.91 | 0.919 | 0.83 | 0.08 | 4.58 | 5 | 0.0148 |
+| **Profile · Novice** | 27 | 10.63 ± 1.01 | 0.917 | 0.67 | 0.15 | 4.81 | 6 | 0.0194 |
+| **Profile · Intermediate** | 27 | 10.81 ± 0.96 | 0.929 | 0.56 | 0.04 | 4.89 | 3 | 0.0141 |
+| **Profile · Misconception-prone** | 27 | 10.89 ± 1.05 | 0.932 | 0.52 | 0.11 | 5.00 | 6 | 0.0140 |
+| **Profile · Hint-dependent** | 27 | 10.89 ± 0.80 | 0.934 | 0.56 | 0.15 | 4.85 | 8 | 0.0139 |
+| **All 27 cells (total / mean)** | **108** | **10.81 ± 0.95** | **0.928** | **0.57** | **0.11** | **4.89** | **23** | **0.0153** |
+| **Default reference (`e830f084`, Baseline × v2 × v2)** | **4** | **11.50 ± 1.00** | **0.958** | **0.00** | **0.00** | **5.50** | **0** | **0.0159** |
+
+*Table 3. Marginal summaries across the 27-condition Lecture 8 comparison (108 completed episodes, 12 activities per episode, 0 prerequisite/update/repeat violations in every group), alongside the separate uncustomized default reference cell (`e830f084`, 4 episodes, excluded from the 27-cell means). Full per-cell metrics are listed in [Appendix C](#appendix-c-lecture-8-run-records).*
+
+Four descriptive patterns stood out in Table 3. First, across Expert maps, Procedural had the lowest first-attempt failure rate (1 retried episode of 36 vs 13 for Rules and 9 for Exemplar) and lowest mean episode cost (US$0.0139), while Rules achieved the highest mean full-credit rate (11.06/12) and unique concept coverage (5.47 concepts/episode vs 4.89 for Procedural). Second, across Assessing templates, Conservative followed its stricter grading instruction by awarding partial rather than full credit more than twice as often as Context-aware (0.83 vs 0.39 partial-credit answers/episode; 0.50 for Correctness-focused), reducing mean demonstrated levels from 5.08 to 4.58 without setting the `uncertain` flag (0 of 665 `Assessment` calls across all three templates). Third, across Tutor templates, Prerequisite-focused (11.08/12, 5.06 demonstrated) and Balanced (10.92/12, 5.03 demonstrated) outperformed Learner-focused (10.42/12, 4.58 demonstrated), though this difference reflected topic-ordering and partial-credit rates rather than prerequisite unlocking because no prerequisite link fell within the 6-concept sample. Fourth, the uncustomized default reference cell (`e830f084`: Baseline map `21568e68` with built-in `v2` Tutor and Assessing prompts, run on the patched runtime) completed all 4 episodes on the first pass (0 retries, 0 violations) with 46/48 full-credit answers (mean 11.50/12, rubric 0.958, 0 partial-credit deductions, 5.50 demonstrated) at a comparable practice cost (US$0.0159/episode vs US$0.0153/episode across the 27 cells). Thus, under basic-level practice without internal prerequisites, the added Tutor and Assessing prompt emphases did not improve in-session completion over the built-in `v2` defaults, whereas the alternative Expert styles substantially reduced Stage-1 course-preparation cost (by 37–44%) and increased prerequisite-link density (11–16 vs 8).
+
 ### 5.5 Human check of model judgments
 
 Human review was required for two judgments: whether a lesson was supported by its cited pages and whether a mark was supported by the student’s writing. Three criteria were specified for that review.
@@ -393,6 +423,8 @@ Misconception precision was calculated at the concept level. Concepts for which 
 Two observations about demonstration were recorded. In an early one-concept trial, a topic was marked as demonstrated even though the learner’s overall post-test score was lower than the pre-test score. A separate measure, the *false-demonstration rate*, was calculated from individual concept–difficulty pairs. Among the pairs marked as demonstrated, it was the proportion for which less than full credit was earned on the corresponding post-test item. A rate of 0.00 was recorded in the later runs `23f5acb8` and `5935f369`. The number of observations was too small for the two-answer rule to be validated as a measure of lasting understanding.
 
 The Lecture 2 evaluation was limited to a single lecture, one generation model, and simulated students with assumed learning and hint rates. The findings were therefore limited to system behaviour under those conditions. Learning gains for real students could not be established without a separate study.
+
+Four limitations also applied to the 27-condition Lecture 8 comparison. First, restricting each run to the first 6 published basic concepts created a ceiling effect for the belief-based `openai/gpt-oss-120b` student: mean full-credit accuracy reached 90.0% across all four profiles (10.63–10.89 of 12), only 12 hints were requested across 1,296 activities, and no episode advanced to intermediate or advanced items. Second, because none of the prerequisite links in the three published Lecture 8 maps connected two concepts inside the 6-concept sample, prerequisite-guided sequencing could not be differentiated from other Tutor templates. Third, because held-out pre-tests and post-tests were skipped in this grid, Table 3 measures in-session grading behaviour, protocol compliance, reliability, and cost rather than external learning gain. Fourth, 8 of the 23 retried episodes (in Cells 1–4) were completed after adding the starter-item fallback and Assessing quote-validation retry fixes; although their frozen course materials and student specifications were preserved unchanged, their recovery reflects the patched runtime rather than the pre-patch runtime.
 
 ---
 
@@ -523,6 +555,42 @@ Five revisions were made to the teaching instructions, the way evidence was supp
 
 A preliminary run (`34dd1895`) was completed before the grid using the Procedural Expert, Learner-focused Tutor, Correctness-focused Assessing template, and novice profile. All 12 activities were completed, 8 answers were marked correct, no hints were used, and 2 levels were demonstrated. No prerequisite violations, invalid updates, or repeats were recorded. The run required 104 calls and 398 s at a cost of US$0.0257. The same condition was scheduled for all 4 learners within the grid. The pilot was excluded from the count of 27 conditions.
 
+### 27-condition Lecture 8 grid results
+
+Each cell below aggregates the 4 completed belief-based learner episodes (Novice, Intermediate, Misconception-prone, Hint-dependent; 48 activities per cell, 1,296 activities overall). All 23 retried episodes succeeded on `attempt-01`, and zero prerequisite violations, invalid updates, or repeated questions were recorded in any cell.
+
+| # | Cell (Expert × Tutor × Assessing, run ID) | First pass (retries) | Activities | Correct / 48 (mean rubric) | Hints | Demonstrated | Violations | Cost (US$) |
+| ---: | :--- | :---: | ---: | :---: | ---: | ---: | ---: | ---: |
+| 1 | Rules × Learner-focused × Correctness-focused (`50beb8ce`) | 2/4 (2) | 48 | 43/48 (0.917) | 1 | 19 | 0 | 0.0786 |
+| 2 | Rules × Learner-focused × Context-aware (`caf1f953`) | 1/4 (3) | 48 | 43/48 (0.906) | 2 | 20 | 0 | 0.0753 |
+| 3 | Rules × Learner-focused × Conservative (`b3f76ce7`) | 3/4 (1) | 48 | 43/48 (0.957) | 0 | 19 | 0 | 0.0644 |
+| 4 | Rules × Prerequisite-focused × Correctness-focused (`3ce89f45`) | 2/4 (2) | 48 | 46/48 (0.972) | 1 | 21 | 0 | 0.0725 |
+| 5 | Rules × Prerequisite-focused × Context-aware (`338897a3`) | 4/4 (0) | 48 | 44/48 (0.958) | 0 | 20 | 0 | 0.0505 |
+| 6 | Rules × Prerequisite-focused × Conservative (`3a9cd45f`) | 3/4 (1) | 48 | 44/48 (0.938) | 2 | 20 | 0 | 0.0679 |
+| 7 | Rules × Balanced × Correctness-focused (`66e99937`) | 2/4 (2) | 48 | 44/48 (0.948) | 1 | 21 | 0 | 0.0778 |
+| 8 | Rules × Balanced × Context-aware (`0d3c5cb0`) | 3/4 (1) | 48 | 48/48 (1.000) | 1 | 23 | 0 | 0.0602 |
+| 9 | Rules × Balanced × Conservative (`6e9900e6`) | 3/4 (1) | 48 | 43/48 (0.917) | 0 | 19 | 0 | 0.0667 |
+| 10 | Procedural × Learner-focused × Correctness-focused (`39324b9e`) | 4/4 (0) | 48 | 42/48 (0.899) | 0 | 19 | 0 | 0.0590 |
+| 11 | Procedural × Learner-focused × Context-aware (`990411b4`) | 4/4 (0) | 48 | 44/48 (0.917) | 0 | 20 | 0 | 0.0565 |
+| 12 | Procedural × Learner-focused × Conservative (`08cbed0f`) | 4/4 (0) | 48 | 39/48 (0.854) | 0 | 16 | 0 | 0.0542 |
+| 13 | Procedural × Prerequisite-focused × Correctness-focused (`c1d08125`) | 4/4 (0) | 48 | 44/48 (0.917) | 0 | 20 | 0 | 0.0510 |
+| 14 | Procedural × Prerequisite-focused × Context-aware (`1be9962d`) | 4/4 (0) | 48 | 45/48 (0.938) | 0 | 21 | 0 | 0.0516 |
+| 15 | Procedural × Prerequisite-focused × Conservative (`7e2b05fe`) | 3/4 (1) | 48 | 44/48 (0.927) | 0 | 20 | 0 | 0.0556 |
+| 16 | Procedural × Balanced × Correctness-focused (`f863cfb9`) | 4/4 (0) | 48 | 43/48 (0.896) | 0 | 20 | 0 | 0.0524 |
+| 17 | Procedural × Balanced × Context-aware (`3d3b1473`) | 4/4 (0) | 48 | 39/48 (0.859) | 0 | 16 | 0 | 0.0669 |
+| 18 | Procedural × Balanced × Conservative (`2c8d3c8c`) | 4/4 (0) | 48 | 41/48 (0.854) | 0 | 17 | 0 | 0.0523 |
+| 19 | Exemplar × Learner-focused × Correctness-focused (`992585cc`) | 4/4 (0) | 48 | 39/48 (0.889) | 2 | 16 | 0 | 0.0585 |
+| 20 | Exemplar × Learner-focused × Context-aware (`e9ec4ddd`) | 1/4 (3) | 48 | 45/48 (0.948) | 0 | 22 | 0 | 0.0745 |
+| 21 | Exemplar × Learner-focused × Conservative (`fc8b751b`) | 4/4 (0) | 48 | 37/48 (0.903) | 0 | 14 | 0 | 0.0574 |
+| 22 | Exemplar × Prerequisite-focused × Correctness-focused (`144e260c`) | 4/4 (0) | 48 | 47/48 (0.993) | 0 | 23 | 0 | 0.0503 |
+| 23 | Exemplar × Prerequisite-focused × Context-aware (`ef271479`) | 3/4 (1) | 48 | 45/48 (0.958) | 0 | 21 | 0 | 0.0618 |
+| 24 | Exemplar × Prerequisite-focused × Conservative (`c208914c`) | 4/4 (0) | 48 | 40/48 (0.922) | 1 | 16 | 0 | 0.0583 |
+| 25 | Exemplar × Balanced × Correctness-focused (`4b071fde`) | 2/4 (2) | 48 | 43/48 (0.931) | 0 | 21 | 0 | 0.0631 |
+| 26 | Exemplar × Balanced × Context-aware (`ebeaec39`) | 2/4 (2) | 48 | 44/48 (0.943) | 1 | 20 | 0 | 0.0624 |
+| 27 | Exemplar × Balanced × Conservative (`e3bc6e0e`) | 3/4 (1) | 48 | 48/48 (1.000) | 0 | 24 | 0 | 0.0562 |
+| — | **Total (27 cells, 108 episodes)** | **85/108 (23)** | **1,296** | **1,167/1,296 (0.928)** | **12** | **528** | **0** | **1.6560** |
+| Ref | Baseline × Default (`v2`) × Default (`v2`) (`e830f084`) | 4/4 (0) | 48 | 46/48 (0.958) | 0 | 22 | 0 | 0.0636 |
+
 ---
 
 ## Appendix D. Software and versions
@@ -536,20 +604,15 @@ The backend was built with FastAPI 0.128.4, Uvicorn 0.40.0, SQLAlchemy 2.0.46, A
 Remove these working notes before submission.
 
 - [ ] Fix the 9 failing tests (`test_organization.py`, `test_slide_evidence.py`, `test_tutor_chat.py`) so the tagged tree passes. Last reported count: 302 passed, 9 failed, 311 collected.
-- [ ] Complete the human-review columns in Appendix C. Use the finished grid to report the 27 conditions in Section 5.3, including failures and retries.
+- [ ] Complete the human-review columns in Appendix C.
+- [x] Report the completed 27-condition Lecture 8 grid (108/108 episodes, including first-attempt failures and retries) in Sections 5.3, 5.4, 5.6, and Appendix C.
 - [ ] Run the live baseline in Section 5, or state that it was checked offline only.
 - [ ] Complete the human check of source reviews and marking.
 - [ ] Fill in the git version, each member’s contribution, and the AI-use notes.
 - [ ] Export the PDF and follow the README on a clean machine.
 - [ ] Confirm which sample files are included in the ZIP.
 
-### Tables for pending comparisons
-
-Use the following table when reporting the 27-condition comparison in Section 5.3.
-
-| Cell | Activities completed | Correct answers | Demonstrated levels | Violations | Cost (US$) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 27 cells × 4 learners | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` | `[TODO]` |
+### Table for pending comparison
 
 For the live baseline comparison in Section 5.4, run the adaptive, fixed-order, and memory-free conditions on the same release of 5 or 7 concepts. Use four profiles, at least three repeats, and 8–12 questions. The estimated cost is under US$0.50. Fill the table if the comparison is completed.
 

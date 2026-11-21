@@ -36,9 +36,25 @@ from learnloop.runtime.events import accept, pending, run_status, step
 
 def assess_single_answer(services, question, context, choice_id, reasoning):
     """Produce and validate feedback using the Workbench Assessor contract."""
-    output = services.generate("Assessing", FEEDBACK_PROMPT, context, Assessment)
-    coverage, score = validate_assessment(question, output, choice_id, reasoning)
-    return output, coverage, score
+    prompt_context = dict(context)
+    for attempt in range(3):
+        output = services.generate("Assessing", FEEDBACK_PROMPT, prompt_context, Assessment)
+        try:
+            coverage, score = validate_assessment(question, output, choice_id, reasoning)
+            return output, coverage, score
+        except ServiceError as error:
+            if attempt == 2 or error.code not in {
+                "invalid_rubric_assessment",
+                "invalid_response_evidence",
+            }:
+                raise
+            prompt_context = {
+                **context,
+                "validationFeedback": (
+                    f"{error.message} Cover every rubric criterion once, and copy every "
+                    "responseQuote character-for-character from the learner's text."
+                ),
+            }
 
 
 def run(factory, services, run_id):

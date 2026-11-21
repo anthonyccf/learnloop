@@ -10,7 +10,7 @@ from learnloop.pseudo_experiment import WorkbenchGraph
 from learnloop.pseudo_workbench import WorkbenchSession, drive_episode
 
 
-def inputs(path, learner_id, condition, settings):
+def inputs(path, learner_id, condition, settings, *, allow_runtime_change=False):
     setup = thaw(path / "input.json")["payload"]["setup"]
     learner = next((item for item in setup.get("learners", []) if item["id"] == learner_id), None)
     if learner is None:
@@ -18,7 +18,7 @@ def inputs(path, learner_id, condition, settings):
     root = path / "episodes" / digest([learner_id, condition])[:16]
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     config = ExperimentConfig.model_validate(manifest["config"])
-    if manifest["runtimeHash"] != runtime_hash():
+    if not allow_runtime_change and manifest["runtimeHash"] != runtime_hash():
         raise ValueError("Evaluation code changed since this episode")
     if config.model != settings.llm_model:
         raise ValueError("Backend model changed since this episode")
@@ -42,9 +42,22 @@ def inputs(path, learner_id, condition, settings):
     return setup, learner, root, manifest, config, unit, exams, artifact
 
 
-def run_retry(path, learner_id, condition, destination, settings, provider_cls=Provider):
+def run_retry(
+    path,
+    learner_id,
+    condition,
+    destination,
+    settings,
+    provider_cls=Provider,
+    *,
+    allow_runtime_change=False,
+):
     setup, learner, _, manifest, config, unit, exams, artifact = inputs(
-        path, learner_id, condition, settings
+        path,
+        learner_id,
+        condition,
+        settings,
+        allow_runtime_change=allow_runtime_change,
     )
     if condition != "adaptive":
         raise ValueError("Only the workbench session can be retried")

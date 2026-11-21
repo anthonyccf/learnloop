@@ -60,37 +60,56 @@ def assess_mixed(services, question, context, answer):
         )
     else:
         response = answer["answerText"]
-        output = services.generate(
-            "Assessing",
-            OPEN_FEEDBACK_PROMPT,
-            {**context, "answerText": response},
-            Assessment,
-        )
-        by_id = {c.criterionId: c for c in output.coverage}
-        if len(by_id) != len(output.coverage) or set(by_id) != {c.id for c in question.rubric}:
-            raise ServiceError(
-                "invalid_rubric_assessment", "Assessment must cover each criterion once.", False
+        open_context = {**context, "answerText": response}
+        for attempt in range(3):
+            output = services.generate(
+                "Assessing",
+                OPEN_FEEDBACK_PROMPT,
+                open_context,
+                Assessment,
             )
-        for item in output.coverage:
-            if (item.score > 0 or item.responseQuote) and (
-                not item.responseQuote or item.responseQuote not in response
-            ):
-                raise ServiceError(
+            try:
+                by_id = {c.criterionId: c for c in output.coverage}
+                if len(by_id) != len(output.coverage) or set(by_id) != {c.id for c in question.rubric}:
+                    raise ServiceError(
+                        "invalid_rubric_assessment", "Assessment must cover each criterion once.", False
+                    )
+                for item in output.coverage:
+                    if (item.score > 0 or item.responseQuote) and (
+                        not item.responseQuote or item.responseQuote not in response
+                    ):
+                        raise ServiceError(
+                            "invalid_response_evidence",
+                            "Rubric credit must cite the learner's answer.",
+                            False,
+                        )
+                for item in output.misconceptions:
+                    if (
+                        item.criterionId not in by_id
+                        or item.responseQuote not in response
+                        or by_id[item.criterionId].score == 1
+                    ):
+                        raise ServiceError(
+                            "invalid_response_evidence",
+                            "The misconception conflicts with the response or rubric.",
+                            False,
+                        )
+                break
+            except ServiceError as error:
+                if attempt == 2 or error.code not in {
+                    "invalid_rubric_assessment",
                     "invalid_response_evidence",
-                    "Rubric credit must cite the learner's answer.",
-                    False,
-                )
-        for item in output.misconceptions:
-            if (
-                item.criterionId not in by_id
-                or item.responseQuote not in response
-                or by_id[item.criterionId].score == 1
-            ):
-                raise ServiceError(
-                    "invalid_response_evidence",
-                    "The misconception conflicts with the response or rubric.",
-                    False,
-                )
+                }:
+                    raise
+                open_context = {
+                    **context,
+                    "answerText": response,
+                    "validationFeedback": (
+                        f"{error.message} Every non-empty responseQuote must be an exact "
+                        "character-for-character substring copied from answerText; set score to 0 "
+                        "and responseQuote to '' if the learner gave no evidence for that criterion."
+                    ),
+                }
 
     coverage = []
     for criterion in question.rubric:

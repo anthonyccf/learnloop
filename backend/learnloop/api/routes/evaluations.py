@@ -181,11 +181,19 @@ def _pseudo_view(path):
             }
             for r in raw["results"]
         ]
+    progress_items = progress(path, saved, job, status["status"]) if saved else []
+    effective_status = dict(status)
+    if (
+        effective_status.get("status") == "completed_with_failures"
+        and progress_items
+        and all(item.get("status") == "completed" for item in progress_items)
+    ):
+        effective_status["status"] = "completed"
     return {
         **job,
-        **status,
+        **effective_status,
         "report": report,
-        "progress": progress(path, saved, job, status["status"]) if saved else [],
+        "progress": progress_items,
     }
 
 

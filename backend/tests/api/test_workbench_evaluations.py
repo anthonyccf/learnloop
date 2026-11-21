@@ -721,3 +721,28 @@ def test_workbench_generation_is_the_only_material_source(stack, monkeypatch, tm
     }
     assert merged["graph"]["prerequisites"] == []
     assert set(merged["chunks"]) == {"chunk-pub", "chunk-gen"}
+
+
+def test_pseudo_view_promotes_completed_with_failures_when_retries_succeed(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    setup = {
+        "material": {"id": "m1"},
+        "release": {"id": "r1", "version": 1},
+        "learners": [{"id": "novice", "name": "Novice"}, {"id": "intermediate", "name": "Intermediate"}],
+    }
+    freeze(run_dir / "input.json", {"setup": setup})
+    (run_dir / "job.json").write_text(
+        '{"id":"' + ("a" * 32) + '","config":{"activities":2,"baselines":false}}',
+        encoding="utf-8",
+    )
+    (run_dir / "status.json").write_text('{"status":"completed_with_failures"}', encoding="utf-8")
+    ep_ok = run_dir / "episodes" / digest(["novice", "adaptive"])[:16]
+    ep_fail = run_dir / "episodes" / digest(["intermediate", "adaptive"])[:16]
+    freeze(ep_ok / "result.json", {"status": "completed"})
+    freeze(ep_fail / "result.json", {"status": "failed", "errorType": "RuntimeError"})
+
+    assert evaluations._pseudo_view(run_dir)["status"] == "completed_with_failures"
+
+    freeze(ep_fail / "retries" / "attempt-01" / "result.json", {"status": "completed"})
+    assert evaluations._pseudo_view(run_dir)["status"] == "completed"
